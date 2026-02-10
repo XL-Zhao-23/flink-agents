@@ -22,14 +22,15 @@ under the License.
     <parent>
         <groupId>org.apache.flink</groupId>
         <artifactId>flink-agents</artifactId>
-        <version>0.2-SNAPSHOT</version>
+        <version>0.3-SNAPSHOT</version>
     </parent>
 
     <artifactId>flink-agents-e2e-tests</artifactId>
     <packaging>pom</packaging>
     <name>Flink Agents : E2E Tests: </name>
     <modules>
-        <module>agent-plan-compatibility-test</module>
-        <module>integration-test</module>
+        <module>flink-agents-end-to-end-tests-agent-plan-compatibility</module>
+        <module>flink-agents-end-to-end-tests-integration</module>
+        <module>flink-agents-end-to-end-tests-resource-cross-language</module>
     </modules>
 </project>

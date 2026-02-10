@@ -60,6 +60,9 @@ public abstract class BaseChatModelSetup extends Resource {
                 (BaseChatModelConnection)
                         this.getResource.apply(this.connection, ResourceType.CHAT_MODEL_CONNECTION);
 
+        // Pass metric group to connection for token usage tracking
+        connection.setMetricGroup(getMetricGroup());
+
         // Format input messages if set prompt.
         if (this.prompt != null) {
             if (this.prompt instanceof String) {
@@ -72,7 +75,16 @@ public abstract class BaseChatModelSetup extends Resource {
                     arguments.put(entry.getKey(), entry.getValue().toString());
                 }
             }
-            messages = prompt.formatMessages(MessageRole.USER, arguments);
+
+            // append meaningful messages
+            List<ChatMessage> promptMessages = prompt.formatMessages(MessageRole.USER, arguments);
+            for (ChatMessage message : messages) {
+                if ((message.getContent() != null && !message.getContent().isEmpty())
+                        || message.getRole() == MessageRole.ASSISTANT) {
+                    promptMessages.add(message);
+                }
+            }
+            messages = promptMessages;
         }
 
         // Get tools can be used.

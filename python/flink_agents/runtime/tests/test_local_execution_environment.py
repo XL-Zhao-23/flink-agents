@@ -19,7 +19,7 @@ import time
 
 import pytest
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
@@ -38,13 +38,13 @@ class Agent1(Agent):  # noqa: D101
 class Agent1WithAsync(Agent):  # noqa: D101
     @action(InputEvent)
     @staticmethod
-    def increment(event: Event, ctx: RunnerContext):  # noqa D102
+    async def increment(event: Event, ctx: RunnerContext):  # noqa D102
         def my_func(value: int) -> int:
             time.sleep(1)
             return value + 1
 
         input = event.input
-        value = yield from ctx.execute_async(my_func, input)
+        value = await ctx.durable_execute_async(my_func, input)
         ctx.send_event(OutputEvent(output=value))
 
 

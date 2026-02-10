@@ -17,7 +17,7 @@
 #################################################################################
 from typing import Any, Dict, Sequence
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import action, chat_model_setup, tool
@@ -46,7 +46,7 @@ class MyAgent(Agent):  # noqa: D101
     @chat_model_setup
     @staticmethod
     def mock_chat_model() -> ResourceDescriptor:  # noqa: D102
-        return ResourceDescriptor(clazz=MockChatModelImpl, host="8.8.8.8",
+        return ResourceDescriptor(clazz=f"{MockChatModelImpl.__module__}.{MockChatModelImpl.__name__}", host="8.8.8.8",
                                   desc="mock chat model just for testing.", connection="mock")
 
     @tool

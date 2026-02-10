@@ -207,3 +207,25 @@ class BaseChatModelSetup(Resource):
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
         return connection.chat(messages, tools=tools, **merged_kwargs)
+
+    def _record_token_metrics(
+        self, model_name: str, prompt_tokens: int, completion_tokens: int
+    ) -> None:
+        """Record token usage metrics for the given model.
+
+        Parameters
+        ----------
+        model_name : str
+            The name of the model used
+        prompt_tokens : int
+            The number of prompt tokens
+        completion_tokens : int
+            The number of completion tokens
+        """
+        metric_group = self.metric_group
+        if metric_group is None:
+            return
+
+        model_group = metric_group.get_sub_group(model_name)
+        model_group.get_counter("promptTokens").inc(prompt_tokens)
+        model_group.get_counter("completionTokens").inc(completion_tokens)

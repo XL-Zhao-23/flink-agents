@@ -18,12 +18,12 @@
 
 package org.apache.flink.agents.plan.resourceprovider;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonIgnore;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.function.BiFunction;
 
@@ -83,7 +83,12 @@ public class JavaSerializableResourceProvider extends SerializableResourceProvid
         if (resource == null) {
             resource =
                     (SerializableResource)
-                            objectMapper.readValue(serializedResource, Class.forName(getClazz()));
+                            objectMapper.readValue(
+                                    serializedResource,
+                                    Class.forName(
+                                            getClazz(),
+                                            true,
+                                            Thread.currentThread().getContextClassLoader()));
         }
         return resource;
     }

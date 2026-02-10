@@ -15,11 +15,15 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import importlib
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Callable, Dict, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, Type
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
+
+if TYPE_CHECKING:
+    from flink_agents.api.metric_group import MetricGroup
 
 
 class ResourceType(Enum):
@@ -57,10 +61,37 @@ class Resource(BaseModel, ABC):
         exclude=True, default=None
     )
 
+    # The metric group bound to this resource, injected in RunnerContext#get_resource
+    _metric_group: "MetricGroup | None" = PrivateAttr(default=None)
+
     @classmethod
     @abstractmethod
     def resource_type(cls) -> ResourceType:
         """Return resource type of class."""
+
+    def set_metric_group(self, metric_group: "MetricGroup") -> None:
+        """Set the metric group for this resource.
+
+        Parameters
+        ----------
+        metric_group : MetricGroup
+            The metric group to bind.
+        """
+        self._metric_group = metric_group
+
+    @property
+    def metric_group(self) -> "MetricGroup | None":
+        """Get the bound metric group.
+
+        Returns:
+        -------
+        MetricGroup | None
+            The bound metric group, or None if not set.
+        """
+        return self._metric_group
+
+    def close(self) -> None:
+        """Close the resource."""
 
 
 class SerializableResource(Resource, ABC):
@@ -73,23 +104,214 @@ class SerializableResource(Resource, ABC):
         return self
 
 
-class ResourceDescriptor:
-    """Descriptor of resource, includes the class and the initialize arguments."""
+class ResourceDescriptor(BaseModel):
+    """Descriptor for Resource instances, storing metadata for serialization and
+    instantiation.
 
-    _clazz: Type[Resource]
-    _arguments: Dict[str, Any]
+    Attributes:
+        target_module: The module name of the resource class.
+        target_clazz: The class name of the resource.
+        arguments: Dictionary containing resource initialization parameters.
+    """
 
-    def __init__(self, *, clazz: Type[Resource], **arguments: Any) -> None:
-        """Init method."""
-        self._clazz = clazz
-        self._arguments = arguments
+    _clazz: Type[Resource] = None
+    target_module: str
+    target_clazz: str
+    arguments: Dict[str, Any]
+
+    def __init__(
+            self,
+            /,
+            *,
+            clazz: str | None = None,
+            target_module: str | None = None,
+            target_clazz: str | None = None,
+            arguments: Dict[str, Any] | None = None,
+            **kwargs: Any,
+    ) -> None:
+        """Initialize ResourceDescriptor.
+
+        Args:
+            clazz: The fully qualified name of the resource implementation, including
+                    module and class.
+            target_module: The module name of the resource class.
+            target_clazz: The class name of the resource.
+            arguments: Dictionary containing resource initialization parameters.
+            **kwargs: Additional keywords arguments for resource initialization,
+            will merge into arguments.
+
+        Usage:
+            descriptor = ResourceDescriptor(clazz="flink_agents.integrations.chat_models
+                                            .ollama_chat_model.OllamaChatModelConnection",
+                                            param1="value1",
+                                            param2="value2")
+        """
+        if clazz is not None:
+            parts = clazz.split(".")
+            target_module = ".".join(parts[:-1])
+            target_clazz = parts[-1]
+
+        if target_clazz is None or target_module is None:
+            msg = "The fully qualified name of the resource must be specified"
+            raise ValueError(msg)
+
+        args = {}
+        if arguments is not None:
+            args.update(arguments)
+        args.update(kwargs)
+
+        super().__init__(
+            target_module=target_module, target_clazz=target_clazz, arguments=args
+        )
 
     @property
     def clazz(self) -> Type[Resource]:
         """Get the class of the resource."""
+        if self._clazz is None:
+            module = importlib.import_module(self.target_module)
+            self._clazz = getattr(module, self.target_clazz)
         return self._clazz
 
-    @property
-    def arguments(self) -> Dict[str, Any]:
-        """Get the initialize arguments of the resource."""
-        return self._arguments
+    def __eq__(self, other: object) -> bool:
+        """Compare ResourceDescriptor objects, ignoring private _clazz field.
+
+        This ensures that deserialized objects (with _clazz=None) can be compared
+        equal to runtime objects (with _clazz set) as long as their serializable
+        fields match.
+        """
+        if not isinstance(other, ResourceDescriptor):
+            return False
+        return (
+                self.target_module == other.target_module
+                and self.target_clazz == other.target_clazz
+                and self.arguments == other.arguments
+        )
+
+    def __hash__(self) -> int:
+        """Generate hash for ResourceDescriptor."""
+        return hash(
+            (
+                self.target_module,
+                self.target_clazz,
+                tuple(sorted(self.arguments.items())),
+            )
+        )
+
+
+def get_resource_class(module_path: str, class_name: str) -> Type[Resource]:
+    """Get Resource class from separate module path and class name.
+
+    Args:
+        module_path: Python module path (e.g., 'your.module.path').
+        class_name: Class name (e.g., 'YourResourceClass').
+
+    Returns:
+        The Resource class type.
+    """
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)
+
+
+class ResourceName:
+    """Hierarchical resource class names for pointing a resource implementation in
+    ResourceDescriptor.
+
+    Structure:
+        - Python implementation: ResourceType.PROVIDER_RESOURCEKIND
+        - Java implementation: ResourceType.Java.PROVIDER_RESOURCEKIND
+
+    Example usage:
+        # Python implementation
+        ResourceName.ChatModel.OLLAMA_CONNECTION
+        ResourceName.ChatModel.OPENAI_SETUP
+
+        # Java implementation
+        ResourceName.ChatModel.Java.OLLAMA_CONNECTION
+    """
+
+    class ChatModel:
+        """ChatModel resource names."""
+
+        # Anthropic
+        ANTHROPIC_CONNECTION = "flink_agents.integrations.chat_models.anthropic.anthropic_chat_model.AnthropicChatModelConnection"
+        ANTHROPIC_SETUP = "flink_agents.integrations.chat_models.anthropic.anthropic_chat_model.AnthropicChatModelSetup"
+
+        # Azure OpenAI
+        AZURE_OPENAI_CONNECTION = "flink_agents.integrations.chat_models.azure.azure_openai_chat_model.AzureOpenAIChatModelConnection"
+        AZURE_OPENAI_SETUP = "flink_agents.integrations.chat_models.azure.azure_openai_chat_model.AzureOpenAIChatModelSetup"
+
+        # Ollama
+        OLLAMA_CONNECTION = "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelConnection"
+        OLLAMA_SETUP = "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup"
+
+        # OpenAI
+        OPENAI_CONNECTION = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelConnection"
+        OPENAI_SETUP = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelSetup"
+
+        # Tongyi
+        TONGYI_CONNECTION = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelConnection"
+        TONGYI_SETUP = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelSetup"
+
+        # Java Wrapper
+        JAVA_WRAPPER_CONNECTION = "flink_agents.api.chat_models.java_chat_model.JavaChatModelConnection"
+        JAVA_WRAPPER_SETUP = "flink_agents.api.chat_models.java_chat_model.JavaChatModelSetup"
+
+        class Java:
+            """Java implementations of ChatModel."""
+
+            # Anthropic
+            ANTHROPIC_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.anthropic.AnthropicChatModelConnection"
+            ANTHROPIC_SETUP = "org.apache.flink.agents.integrations.chatmodels.anthropic.AnthropicChatModelSetup"
+
+            # Azure
+            AZURE_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.anthropic.AzureAIChatModelConnection"
+            AZURE_SETUP = "org.apache.flink.agents.integrations.chatmodels.anthropic.AzureAIChatModelSetup"
+
+            # Ollama
+            OLLAMA_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection"
+            OLLAMA_SETUP = "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup"
+
+            # OpenAI
+            OPENAI_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelConnection"
+            OPENAI_SETUP = "org.apache.flink.agents.integrations.chatmodels.openai.OpenAIChatModelSetup"
+
+    class EmbeddingModel:
+        """EmbeddingModel resource names."""
+
+        # Ollama
+        OLLAMA_CONNECTION = "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelConnection"
+        OLLAMA_SETUP = "flink_agents.integrations.embedding_models.local.ollama_embedding_model.OllamaEmbeddingModelSetup"
+
+        # OpenAI
+        OPENAI_CONNECTION = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelConnection"
+        OPENAI_SETUP = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelSetup"
+
+        # Java Wrapper
+        JAVA_WRAPPER_CONNECTION = "flink_agents.api.embedding_models.java_embedding_model.JavaEmbeddingModelConnection"
+        JAVA_WRAPPER_SETUP = "flink_agents.api.embedding_models.java_embedding_model.JavaEmbeddingModelSetup"
+
+        class Java:
+            """Java implementations of EmbeddingModel."""
+
+            # Ollama
+            OLLAMA_CONNECTION = "org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelConnection"
+            OLLAMA_SETUP = "org.apache.flink.agents.integrations.embeddingmodels.ollama.OllamaEmbeddingModelSetup"
+
+    class VectorStore:
+        """VectorStore resource names."""
+
+        # Chroma
+        CHROMA_VECTOR_STORE = "flink_agents.integrations.vector_stores.chroma.chroma_vector_store.ChromaVectorStore"
+
+        # Java Wrapper
+        JAVA_WRAPPER_VECTOR_STORE = "flink_agents.api.vector_stores.java_vector_store.JavaVectorStore"
+        JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE = "flink_agents.api.vector_stores.java_vector_store.JavaCollectionManageableVectorStore"
+
+        class Java:
+            """Java implementations of VectorStore."""
+
+            # Elasticsearch
+            ELASTICSEARCH_VECTOR_STORE = "org.apache.flink.agents.integrations.vectorstores.elasticsearch.ElasticsearchVectorStore"
+
+    # MCP resource names
+    MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"

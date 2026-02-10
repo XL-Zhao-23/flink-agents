@@ -40,9 +40,7 @@ Local prompts are templates defined directly in your code. They support variable
 
 MCP (Model Context Protocol) prompts are managed by external MCP servers. They enable dynamic prompt retrieval, centralized prompt management, and integration with external prompt repositories.
 
-{{< hint warning >}}
-MCP Prompt is only supported in python currently.
-{{< /hint >}}
+See [MCP]({{< ref "docs/development/mcp" >}}) for details.
 ## Local Prompt
 
 ### Creating from Text
@@ -103,7 +101,7 @@ String PRODUCT_SUGGESTION_PROMPT_STR =
                 + "{input}";
 
 
-Prompt productSuggestionPrompt = new Prompt(PRODUCT_SUGGESTION_PROMPT_STR);
+Prompt productSuggestionPrompt = Prompt.fromText(PRODUCT_SUGGESTION_PROMPT_STR);
 ```
 {{< /tab >}}
 
@@ -158,7 +156,7 @@ review_analysis_prompt = Prompt.from_messages(
 {{< tab "Java" >}}
 ```java
 Prompt reviewAnalysisPrompt =
-        new Prompt(
+        Prompt.fromMessages(
                 Arrays.asList(
                         new ChatMessage(
                                 MessageRole.SYSTEM,
@@ -238,7 +236,7 @@ class ReviewAnalysisAgent(Agent):
     def review_analysis_model() -> ResourceDescriptor:
         """ChatModel which focus on review analysis."""
         return ResourceDescriptor(
-            clazz=OllamaChatModelSetup,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_server",
             model="qwen3:8b",
             prompt="review_analysis_prompt",
@@ -269,7 +267,7 @@ public class ReviewAnalysisAgent extends Agent {
 
     @Prompt
     public static org.apache.flink.agents.api.prompt.Prompt reviewAnalysisPrompt() {
-        return new org.apache.flink.agents.api.prompt.Prompt(
+        return Prompt.fromMessages(
                 Arrays.asList(
                         new ChatMessage(
                                 MessageRole.SYSTEM,
@@ -293,7 +291,7 @@ public class ReviewAnalysisAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor reviewAnalysisModel() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
                 .addInitialArgument("model", "qwen3:8b")
                 .addInitialArgument("prompt", "reviewAnalysisPrompt")
@@ -328,94 +326,3 @@ public class ReviewAnalysisAgent extends Agent {
 {{< /tabs >}}
 
 Prompts use `{variable_name}` syntax for template variables. Variables are filled from `ChatMessage.extra_args`. The prompt is automatically applied when the chat model is invoked.
-
-## MCP Prompt
-
-{{< hint info >}}
-MCP (Model Context Protocol) is a standardized protocol for integrating AI applications with external data sources and tools. MCP prompts allow dynamic prompt retrieval from MCP servers.
-{{< /hint >}}
-
-{{< hint warning >}}
-MCP Prompt is only supported in python currently.
-{{< /hint >}}
-
-MCP prompts are managed by external MCP servers and automatically discovered when you define an MCP server connection in your agent.
-
-### Define MCP Server with Prompts
-
-Create an MCP server that exposes prompts using the `FastMCP` library:
-
-```python
-# mcp_server.py
-mcp = FastMCP("ReviewServer")
-
-@mcp.prompt()
-def review_analysis_prompt(product_id: str, review: str) -> str:
-    """Prompt for analyzing product reviews."""
-    return f"""
-    Analyze the following product review and provide a satisfaction score (1-5).
-
-    Product ID: {product_id}
-    Review: {review}
-
-    Output format: {{"score": 1-5, "reasons": ["reason1", "reason2"]}}
-    """
-
-mcp.run("streamable-http")
-```
-
-**Key points:**
-- Use `@mcp.prompt()` decorator to define prompts
-- Prompt function parameters become template variables
-- The function name becomes the prompt identifier
-
-### Use MCP Prompts in Agent
-
-Connect to the MCP server and use its prompts in your agent:
-
-```python
-class ReviewAnalysisAgent(Agent):
-
-    @mcp_server
-    @staticmethod
-    def review_mcp_server() -> MCPServer:
-        """Connect to MCP server."""
-        return MCPServer(endpoint="http://127.0.0.1:8000/mcp")
-
-    @chat_model_connection
-    @staticmethod
-    def ollama_server() -> ResourceDescriptor:
-        """Ollama connection."""
-        return ResourceDescriptor(clazz=OllamaChatModelConnection)
-
-    @chat_model_setup
-    @staticmethod
-    def review_model() -> ResourceDescriptor:
-        return ResourceDescriptor(
-            clazz=OllamaChatModelSetup,
-            connection="ollama_server",
-            model="qwen3:8b",
-            prompt="review_analysis_prompt",  # Reference MCP prompt by name
-        )
-
-    @action(InputEvent)
-    @staticmethod
-    def process_input(event: InputEvent, ctx: RunnerContext) -> None:
-        input_data = event.input
-
-        # Provide prompt variables via extra_args
-        msg = ChatMessage(
-            role=MessageRole.USER,
-            extra_args={
-                "product_id": input_data.product_id,
-                "review": input_data.review
-            }
-        )
-        ctx.send_event(ChatRequestEvent(model="review_model", messages=[msg]))
-```
-
-**Key points:**
-- Use `@mcp_server` decorator to define MCP server connection
-- Reference MCP prompts by their function name (e.g., `"review_analysis_prompt"`)
-- Provide prompt parameters using `ChatMessage.extra_args`
-- All prompts and tools from the MCP server are automatically registered

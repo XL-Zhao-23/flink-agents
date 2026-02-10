@@ -27,6 +27,10 @@ import java.util.Map;
  * nested object.Fields can be accessed using an absolute or relative path.
  */
 public interface MemoryObject {
+    enum MemoryType {
+        SENSORY,
+        SHORT_TERM
+    }
     /**
      * Returns a MemoryObject that represents the given path.
      *
@@ -70,6 +74,18 @@ public interface MemoryObject {
      * @throws Exception if field exists but is not a nested object and overwrite is false
      */
     MemoryObject newObject(String path, boolean overwrite) throws Exception;
+
+    /**
+     * Creates a new MemoryObject as an indirect field in the current object. Won't overwrite
+     * existing field.
+     *
+     * @param path relative path from the current object to the target field
+     * @return the created object
+     * @throws Exception if field exists but is not a nested object and overwrite is false
+     */
+    default MemoryObject newObject(String path) throws Exception {
+        return this.newObject(path, false);
+    }
 
     /**
      * Checks whether a (direct or indirect) field exists in the current object.

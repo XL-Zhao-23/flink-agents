@@ -18,33 +18,35 @@
 
 package org.apache.flink.agents.plan;
 
-import org.apache.flink.agents.api.Agent;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.annotation.ChatModelConnection;
-import org.apache.flink.agents.api.annotation.ChatModelSetup;
-import org.apache.flink.agents.api.annotation.EmbeddingModelConnection;
-import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
-import org.apache.flink.agents.api.annotation.Prompt;
-import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.annotation.*;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
+import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
+import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
+import org.apache.flink.agents.plan.actions.ContextRetrievalAction;
 import org.apache.flink.agents.plan.actions.ToolCallAction;
+import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.plan.tools.ToolMetadataFactory;
 import org.apache.flink.api.java.tuple.Tuple3;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -59,11 +61,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
+
+import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
+import static org.apache.flink.agents.api.resource.ResourceType.PROMPT;
+import static org.apache.flink.agents.api.resource.ResourceType.TOOL;
 
 /** Agent plan compiled from user defined agent. */
 @JsonSerialize(using = AgentPlanJsonSerializer.class)
 @JsonDeserialize(using = AgentPlanJsonDeserializer.class)
 public class AgentPlan implements Serializable {
+    private static final Logger LOG = LoggerFactory.getLogger(AgentPlan.class);
+    private static final String JAVA_MCP_SERVER_CLASS_NAME =
+            "org.apache.flink.agents.integrations.mcp.MCPServer";
 
     /** Mapping from action name to action itself. */
     private Map<String, Action> actions;
@@ -75,6 +85,8 @@ public class AgentPlan implements Serializable {
     private Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
 
     private AgentConfiguration config;
+
+    private transient PythonResourceAdapter pythonResourceAdapter;
 
     /** Cache for instantiated resources. */
     private transient Map<ResourceType, Map<String, Resource>> resourceCache;
@@ -128,6 +140,62 @@ public class AgentPlan implements Serializable {
         this.config = config;
     }
 
+    public void setPythonResourceAdapter(PythonResourceAdapter adapter) throws Exception {
+        this.pythonResourceAdapter = adapter;
+        Map<String, ResourceProvider> servers = resourceProviders.get(MCP_SERVER);
+        if (servers == null) {
+            return;
+        }
+        servers.values().stream()
+                .filter(PythonResourceProvider.class::isInstance)
+                .map(PythonResourceProvider.class::cast)
+                .forEach(
+                        provider -> {
+                            provider.setPythonResourceAdapter(adapter);
+
+                            // Get tools and prompts from server
+                            try {
+                                PythonMCPServer server =
+                                        (PythonMCPServer)
+                                                provider.provide(
+                                                        (String anotherName,
+                                                                ResourceType anotherType) -> {
+                                                            try {
+                                                                return this.getResource(
+                                                                        anotherName, anotherType);
+                                                            } catch (Exception e) {
+                                                                throw new RuntimeException(e);
+                                                            }
+                                                        });
+
+                                // Add tools to cache
+                                server.listTools()
+                                        .forEach(
+                                                tool ->
+                                                        resourceCache
+                                                                .computeIfAbsent(
+                                                                        TOOL,
+                                                                        k ->
+                                                                                new ConcurrentHashMap<>())
+                                                                .put(tool.getName(), tool));
+
+                                // Add prompts to cache
+                                server.listPrompts()
+                                        .forEach(
+                                                prompt ->
+                                                        resourceCache
+                                                                .computeIfAbsent(
+                                                                        PROMPT,
+                                                                        k ->
+                                                                                new ConcurrentHashMap<>())
+                                                                .put(prompt.getName(), prompt));
+                            } catch (Exception e) {
+                                throw new RuntimeException(
+                                        "Failed to process Python MCP server in Java", e);
+                            }
+                        });
+    }
+
     public Map<String, Action> getActions() {
         return actions;
     }
@@ -174,6 +242,10 @@ public class AgentPlan implements Serializable {
 
         ResourceProvider provider = resourceProviders.get(type).get(name);
 
+        if (pythonResourceAdapter != null && provider instanceof PythonResourceProvider) {
+            ((PythonResourceProvider) provider).setPythonResourceAdapter(pythonResourceAdapter);
+        }
+
         // Create resource using provider
         Resource resource =
                 provider.provide(
@@ -197,6 +269,15 @@ public class AgentPlan implements Serializable {
 
     public Map<String, Object> getConfigData() {
         return config.getConfData();
+    }
+
+    public void close() throws Exception {
+        for (Map<String, Resource> resources : resourceCache.values()) {
+            for (Resource resource : resources.values()) {
+                resource.close();
+            }
+        }
+        resourceCache.clear();
     }
 
     private void writeObject(ObjectOutputStream out) throws IOException {
@@ -254,6 +335,7 @@ public class AgentPlan implements Serializable {
         // Add built-in actions
         addBuiltAction(ChatModelAction.getChatModelAction());
         addBuiltAction(ToolCallAction.getToolCallAction());
+        addBuiltAction(ContextRetrievalAction.getContextRetrievalAction());
 
         // Scan the agent class for methods annotated with @Action
         Class<?> agentClass = agent.getClass();
@@ -278,9 +360,30 @@ public class AgentPlan implements Serializable {
     }
 
     private void extractResource(ResourceType type, Method method) throws Exception {
+        extractResource(type, method, null);
+    }
+
+    private void extractResource(
+            ResourceType type,
+            Method method,
+            Function<ResourceDescriptor, ResourceDescriptor> descriptorDecorator)
+            throws Exception {
         String name = method.getName();
+        ResourceProvider provider;
         ResourceDescriptor descriptor = (ResourceDescriptor) method.invoke(null);
-        JavaResourceProvider provider = new JavaResourceProvider(name, type, descriptor);
+
+        descriptor =
+                descriptorDecorator != null ? descriptorDecorator.apply(descriptor) : descriptor;
+
+        if (PythonResourceWrapper.class.isAssignableFrom(
+                Class.forName(
+                        descriptor.getClazz(),
+                        true,
+                        Thread.currentThread().getContextClassLoader()))) {
+            provider = new PythonResourceProvider(name, type, descriptor);
+        } else {
+            provider = new JavaResourceProvider(name, type, descriptor);
+        }
         addResourceProvider(provider);
     }
 
@@ -296,10 +399,56 @@ public class AgentPlan implements Serializable {
 
         FunctionTool tool = new FunctionTool(metadata, javaFunction);
         JavaSerializableResourceProvider provider =
-                JavaSerializableResourceProvider.createResourceProvider(
-                        name, ResourceType.TOOL, tool);
+                JavaSerializableResourceProvider.createResourceProvider(name, TOOL, tool);
 
         addResourceProvider(provider);
+    }
+
+    private void extractJavaMCPServer(Method method) throws Exception {
+        // Use reflection to handle MCP classes to support Java 11 without MCP
+        String name = method.getName();
+
+        ResourceDescriptor descriptor = (ResourceDescriptor) method.invoke(null);
+        descriptor =
+                new ResourceDescriptor(
+                        descriptor.getModule(),
+                        JAVA_MCP_SERVER_CLASS_NAME,
+                        new HashMap<>(descriptor.getInitialArguments()));
+        JavaResourceProvider provider = new JavaResourceProvider(name, MCP_SERVER, descriptor);
+
+        addResourceProvider(provider);
+        Object mcpServer = provider.provide(null);
+
+        // Call listTools() via reflection
+        Method listToolsMethod = mcpServer.getClass().getMethod("listTools");
+        @SuppressWarnings("unchecked")
+        Iterable<? extends SerializableResource> tools =
+                (Iterable<? extends SerializableResource>) listToolsMethod.invoke(mcpServer);
+
+        for (SerializableResource tool : tools) {
+            Method getNameMethod = tool.getClass().getMethod("getName");
+            String toolName = (String) getNameMethod.invoke(tool);
+            addResourceProvider(
+                    JavaSerializableResourceProvider.createResourceProvider(toolName, TOOL, tool));
+        }
+
+        // Call listPrompts() via reflection
+        Method listPromptsMethod = mcpServer.getClass().getMethod("listPrompts");
+        @SuppressWarnings("unchecked")
+        Iterable<? extends SerializableResource> prompts =
+                (Iterable<? extends SerializableResource>) listPromptsMethod.invoke(mcpServer);
+
+        for (SerializableResource prompt : prompts) {
+            Method getNameMethod = prompt.getClass().getMethod("getName");
+            String promptName = (String) getNameMethod.invoke(prompt);
+            addResourceProvider(
+                    JavaSerializableResourceProvider.createResourceProvider(
+                            promptName, PROMPT, prompt));
+        }
+
+        // Call close() via reflection
+        Method closeMethod = mcpServer.getClass().getMethod("close");
+        closeMethod.invoke(mcpServer);
     }
 
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
@@ -324,8 +473,7 @@ public class AgentPlan implements Serializable {
                     if (fieldValue instanceof Resource) {
                         Resource resource = (Resource) fieldValue;
                         ResourceProvider provider =
-                                createResourceProvider(
-                                        resourceName, ResourceType.TOOL, resource, agentClass);
+                                createResourceProvider(resourceName, TOOL, resource, agentClass);
                         addResourceProvider(provider);
                     }
                 } catch (IllegalAccessException e) {
@@ -367,7 +515,7 @@ public class AgentPlan implements Serializable {
 
                 JavaSerializableResourceProvider provider =
                         JavaSerializableResourceProvider.createResourceProvider(
-                                promptName, ResourceType.PROMPT, prompt);
+                                promptName, PROMPT, prompt);
 
                 addResourceProvider(provider);
             } else if (method.isAnnotationPresent(ChatModelSetup.class)) {
@@ -378,6 +526,36 @@ public class AgentPlan implements Serializable {
                 extractResource(ResourceType.EMBEDDING_MODEL, method);
             } else if (method.isAnnotationPresent(EmbeddingModelConnection.class)) {
                 extractResource(ResourceType.EMBEDDING_MODEL_CONNECTION, method);
+            } else if (method.isAnnotationPresent(VectorStore.class)) {
+                extractResource(ResourceType.VECTOR_STORE, method);
+            } else if (method.isAnnotationPresent(MCPServer.class)) {
+                // Check the MCPServer annotation version to determine which version to use.
+                MCPServer MCPServerAnnotation = method.getAnnotation(MCPServer.class);
+                String lang = MCPServerAnnotation.lang();
+                int javaVersion = Runtime.version().feature();
+
+                if (lang.equalsIgnoreCase("auto")) {
+                    lang = javaVersion >= 17 ? "java" : "python";
+                } else if (lang.equalsIgnoreCase("java") && javaVersion < 17) {
+                    throw new UnsupportedOperationException(
+                            "Java version is less than 17, please use python MCP server.");
+                }
+
+                if (lang.equalsIgnoreCase("java")) {
+                    extractJavaMCPServer(method);
+                } else {
+                    LOG.warn(
+                            "Using the Python MCP server with cross-language support. The Java version is "
+                                    + javaVersion);
+                    extractResource(
+                            ResourceType.MCP_SERVER,
+                            method,
+                            desc ->
+                                    new ResourceDescriptor(
+                                            desc.getModule(),
+                                            PythonMCPServer.class.getName(),
+                                            new HashMap<>(desc.getInitialArguments())));
+                }
             }
         }
 
@@ -385,22 +563,31 @@ public class AgentPlan implements Serializable {
             ResourceType type = entry.getKey();
             if (type == ResourceType.CHAT_MODEL || type == ResourceType.CHAT_MODEL_CONNECTION) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
-                    JavaResourceProvider provider =
-                            new JavaResourceProvider(
-                                    kv.getKey(), type, (ResourceDescriptor) kv.getValue());
+                    ResourceProvider provider;
+                    if (PythonResourceWrapper.class.isAssignableFrom(
+                            Class.forName(
+                                    ((ResourceDescriptor) kv.getValue()).getClazz(),
+                                    true,
+                                    Thread.currentThread().getContextClassLoader()))) {
+                        provider =
+                                new PythonResourceProvider(
+                                        kv.getKey(), type, (ResourceDescriptor) kv.getValue());
+                    } else {
+                        provider =
+                                new JavaResourceProvider(
+                                        kv.getKey(), type, (ResourceDescriptor) kv.getValue());
+                    }
                     addResourceProvider(provider);
                 }
-            } else if (type == ResourceType.PROMPT) {
+            } else if (type == PROMPT) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     JavaSerializableResourceProvider provider =
                             JavaSerializableResourceProvider.createResourceProvider(
-                                    kv.getKey(),
-                                    ResourceType.PROMPT,
-                                    (SerializableResource) kv.getValue());
+                                    kv.getKey(), PROMPT, (SerializableResource) kv.getValue());
 
                     addResourceProvider(provider);
                 }
-            } else if (type == ResourceType.TOOL) {
+            } else if (type == TOOL) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     extractTool(
                             ((org.apache.flink.agents.api.tools.FunctionTool) kv.getValue())

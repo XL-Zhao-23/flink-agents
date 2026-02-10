@@ -17,12 +17,12 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
-import org.apache.flink.shaded.guava31.com.google.common.base.Preconditions;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.util.Preconditions;
 
 import javax.annotation.Nonnull;
 
@@ -59,22 +59,15 @@ public class ActionStateUtil {
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {
-        if (event instanceof InputEvent) {
+        if (event instanceof PythonEvent) {
+            PythonEvent pythonEvent = (PythonEvent) event;
+            return String.valueOf(UUID.nameUUIDFromBytes(pythonEvent.getEvent()));
+        } else if (event instanceof InputEvent) {
             InputEvent inputEvent = (InputEvent) event;
             byte[] inputEventBytes =
                     MAPPER.writeValueAsBytes(
                             new Object[] {inputEvent.getInput(), inputEvent.getAttributes()});
             return String.valueOf(UUID.nameUUIDFromBytes(inputEventBytes));
-        } else if (event instanceof PythonEvent) {
-            PythonEvent pythonEvent = (PythonEvent) event;
-            byte[] pythonEventBytes =
-                    MAPPER.writeValueAsBytes(
-                            new Object[] {
-                                pythonEvent.getEvent(),
-                                pythonEvent.getEventType(),
-                                pythonEvent.getAttributes()
-                            });
-            return String.valueOf(UUID.nameUUIDFromBytes(pythonEventBytes));
         } else {
             return String.valueOf(
                     UUID.nameUUIDFromBytes(

@@ -21,6 +21,7 @@ package org.apache.flink.agents.examples;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.examples.agents.CustomTypesAndResources;
 import org.apache.flink.agents.examples.agents.ProductSuggestionAgent;
@@ -37,13 +38,13 @@ import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 
 import java.io.File;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.apache.flink.agents.examples.WorkflowSingleAgentExample.copyResource;
 import static org.apache.flink.agents.examples.agents.CustomTypesAndResources.ProductReviewAnalysisRes;
 import static org.apache.flink.agents.examples.agents.CustomTypesAndResources.ProductReviewSummary;
-import static org.apache.flink.streaming.api.windowing.time.Time.minutes;
 
 /**
  * Java example demonstrating multiple workflow agents for product improvement suggestion.
@@ -129,6 +130,9 @@ public class WorkflowMultipleAgentExample {
         AgentsExecutionEnvironment agentsEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
 
+        // limit async request to avoid overwhelming ollama server
+        agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
+
         // Add Ollama chat model connection to be used by the ReviewAnalysisAgent
         // and ProductSuggestionAgent.
         agentsEnv.addResource(
@@ -164,7 +168,7 @@ public class WorkflowMultipleAgentExample {
                 reviewAnalysisResStream
                         .map(element -> (ProductReviewAnalysisRes) element)
                         .keyBy(ProductReviewAnalysisRes::getId)
-                        .window(TumblingProcessingTimeWindows.of(minutes(1)))
+                        .window(TumblingProcessingTimeWindows.of(Duration.ofMinutes(1)))
                         .process(new AggregateScoreDistributionAndDislikeReasons());
 
         // Use the ProductSuggestionAgent (LLM) to generate product improvement

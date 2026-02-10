@@ -19,7 +19,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.decorators import (
     action,
@@ -29,14 +29,11 @@ from flink_agents.api.decorators import (
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import InputEvent, OutputEvent
 from flink_agents.api.prompts.prompt import Prompt
-from flink_agents.api.resource import ResourceDescriptor
+from flink_agents.api.resource import ResourceDescriptor, ResourceName
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
     ProductSuggestion,
     product_suggestion_prompt,
-)
-from flink_agents.integrations.chat_models.ollama_chat_model import (
-    OllamaChatModelSetup,
 )
 
 if TYPE_CHECKING:
@@ -68,7 +65,7 @@ class ProductSuggestionAgent(Agent):
     def generate_suggestion_model() -> ResourceDescriptor:
         """ChatModel which focus on generating product suggestions."""
         return ResourceDescriptor(
-            clazz=OllamaChatModelSetup,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_server",
             model="qwen3:8b",
             prompt="generate_suggestion_prompt",
@@ -108,7 +105,7 @@ class ProductSuggestionAgent(Agent):
                     output=ProductSuggestion(
                         id=ctx.short_term_memory.get("id"),
                         score_hist=ctx.short_term_memory.get("score_hist"),
-                        suggestions=json_content["suggestions"],
+                        suggestions=json_content["suggestion_list"],
                     )
                 )
             )

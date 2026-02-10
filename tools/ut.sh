@@ -20,10 +20,15 @@ set -e
 
 ROOT="$(cd "$( dirname "$0" )" && pwd)/.."
 
+# Default Flink version
+DEFAULT_FLINK_VERSION="2.2"
+
 # Default values
 run_java=true
 run_python=true
+run_e2e=false
 verbose=false
+flink_versions=()
 
 # Help information
 show_help() {
@@ -35,13 +40,20 @@ Usage: $0 [options]
 Options:
   -j, --java        Run only Java tests
   -p, --python      Run only Python tests
+  -e, --e2e         Run e2e tests
   -b, --both        Run both Java and Python tests (default)
+  -f, --flink       Specify Flink version to test (can be used multiple times)
+                    Supported versions: 2.2, 1.20
+                    Examples: -f 2.2, -f 1.20, -f 2.2 -f 1.20
+                    Default: run all versions if not specified
   -v, --verbose     Show verbose output
   -h, --help        Display this help message
 
 Examples:
-  $0 --java         # Run only Java tests
+  $0 --java         # Run only Java tests (all Flink versions)
   $0 -p             # Run only Python tests
+  $0 -f 2.2         # Run tests only for Flink 2.2
+  $0 -f 1.20        # Run tests only for Flink 1.20
   $0 -v             # Run all tests with verbose output
 
 Exit codes:
@@ -67,6 +79,18 @@ while [[ "$#" -gt 0 ]]; do
             run_java=true
             run_python=true
             ;;
+        -e|--e2e)
+            run_e2e=true
+            ;;
+        -f|--flink)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                echo "Error: -f requires a version argument (e.g., -f 1.20)" >&2
+                show_help
+                exit 1
+            fi
+            flink_versions+=("$2")
+            shift
+            ;;
         -v|--verbose)
             verbose=true
             ;;
@@ -83,6 +107,18 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
+# If no version is specified, the default version will be run by default.
+if [ ${#flink_versions[@]} -eq 0 ]; then
+    flink_versions=("${DEFAULT_FLINK_VERSION}")
+fi
+
+# Remove duplicates and sort version numbers
+flink_versions=($(echo "${flink_versions[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
+
+if $verbose; then
+    echo "Will run tests for Flink versions: ${flink_versions[*]}"
+fi
+
 java_tests() {
     if $verbose; then
         echo "Running Java tests..."
@@ -90,8 +126,53 @@ java_tests() {
     set +e
     echo "Executing Java test suite..."
     pushd "${ROOT}"
-    mvn -T16 --batch-mode --no-transfer-progress test
-    testcode=$?
+    if $run_e2e; then
+        echo "Installing dist packages to local repository..."
+
+        dist_modules=""
+        for version in "${flink_versions[@]}"; do
+            dist_modules="${dist_modules},dist/flink-${version}"
+        done
+        dist_modules="${dist_modules#,}"
+
+        mvn --batch-mode --no-transfer-progress install -pl "$dist_modules" -DskipTests
+        install_code=$?
+        if [ $install_code -ne 0 ]; then
+            echo "Failed to install dist packages" >&2
+            return 1
+        fi
+
+        local all_passed=true
+        for version in "${flink_versions[@]}"; do
+            echo "Running E2E tests for Flink ${version}..."
+            mvn --batch-mode --no-transfer-progress test -pl 'e2e-test/flink-agents-end-to-end-tests-integration' -Pflink-${version}
+
+            if [ $? -ne 0 ]; then
+                echo "E2E tests failed for Flink ${version}" >&2
+                all_passed=false
+            fi
+        done
+
+        if [ "$all_passed" = false ]; then
+            return 1
+        fi
+        testcode=0
+    else
+        echo "Installing all modules (including test-jars) to local repository..."
+        mvn --batch-mode --no-transfer-progress test-compile jar:test-jar install -DskipTests
+        install_code=$?
+        if [ $install_code -ne 0 ]; then
+            echo "Failed to install modules to local repository" >&2
+            return 1
+        fi
+
+        local all_passed=true
+
+        exclude_list="!e2e-test/flink-agents-end-to-end-tests-integration,!e2e-test/flink-agents-end-to-end-tests-resource-cross-language"
+
+        mvn -T16 --batch-mode --no-transfer-progress test -pl "${exclude_list}"
+        testcode=$?
+    fi
     case $testcode in
         0)  # All tests passed
             if $verbose; then
@@ -121,69 +202,92 @@ python_tests() {
 
     set +e
     pushd "${ROOT}"/python
-    
-    # Install dependencies and run tests
-    echo "Installing Python test dependencies..."
-    if command -v uv >/dev/null 2>&1; then
-        if $verbose; then
-            echo "Using uv for dependency management"
-        fi
-        uv sync --extra test
-        if $verbose; then
-            echo "Running tests with uv..."
-        fi
-        uv run pytest flink_agents
-        testcode=$?
-    else
-        if $verbose; then
-            echo "uv not found, falling back to pip"
-        fi
-        # Try modern pyproject.toml first, then fallback to requirements.txt
-        if [ -f "pyproject.toml" ]; then
+
+    # Run tests for each Flink version
+    local all_passed=true
+    for version in "${flink_versions[@]}"; do
+        echo "Running Python tests for Flink ${version}..."
+
+        # Install dependencies and run tests
+        if command -v uv >/dev/null 2>&1; then
             if $verbose; then
-                echo "Using pyproject.toml dependency groups"
+                echo "Using uv for dependency management"
             fi
-            pip install -e ".[test]"
+            if $verbose; then
+                echo "Running tests with uv for Flink ${version}..."
+            fi
+            if $run_e2e; then
+                # There will be an individual build step before run e2e test for including java dist
+                uv pip install apache-flink~=${version}.0
+                uv run --no-sync pytest flink_agents \
+                -s \
+                -k "e2e_tests_integration" \
+                -o log_cli=true \
+                -o log_cli_level=${LOG_LEVEL:-CRITICAL}
+            else
+                uv sync --extra test
+                uv pip install apache-flink~=${version}.0
+                uv run --no-sync pytest flink_agents \
+                -k "not e2e_tests" \
+                -o log_cli=true \
+                -o log_cli_level=${LOG_LEVEL:-CRITICAL}            
+            fi
+            testcode=$?
         else
             if $verbose; then
-                echo "Using legacy requirements.txt"
+                echo "uv not found, falling back to pip"
             fi
-            pip install -r requirements/test_requirements.txt
+            # Try modern pyproject.toml first, then fallback to requirements.txt
+            if [ -f "pyproject.toml" ]; then
+                if $verbose; then
+                    echo "Using pyproject.toml dependency groups"
+                fi
+                pip install -e ".[test]"
+                pip install apache-flink~=${version}.0
+            fi
+            if $verbose; then
+                echo "Running tests with pytest..."
+            fi
+            if $run_e2e; then
+                pytest flink_agents -k "e2e_tests_integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+            else
+                pytest flink_agents -k "not e2e_tests" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+            fi
+            testcode=$?
         fi
-        if $verbose; then
-            echo "Running tests with pytest..."
-        fi
-        pytest flink_agents
-        testcode=$?
-    fi
-    
+
+        # Handle pytest exit codes
+        case $testcode in
+            0)  # All tests passed
+                if $verbose; then
+                    echo "Python tests passed for Flink ${version}"
+                fi
+                ;;
+            1)  # Tests failed
+                echo "Python tests failed for Flink ${version}" >&2
+                all_passed=false
+                ;;
+            2)  # Test execution interrupted
+                echo "Python tests interrupted for Flink ${version}" >&2
+                all_passed=false
+                ;;
+            5)  # No tests collected
+                echo "Warning: No Python tests collected for Flink ${version}" >&2
+                ;;
+            *)  # Unknown error
+                echo "Python tests encountered unknown error for Flink ${version} (exit code: $testcode)" >&2
+                all_passed=false
+                ;;
+        esac
+    done
+
     popd
 
-    # Handle pytest exit codes
-    case $testcode in
-        0)  # All tests passed
-            if $verbose; then
-                echo "All Python tests passed"
-            fi
-            return 0
-            ;;
-        1)  # Tests failed
-            echo "Python tests failed" >&2
-            return 2
-            ;;
-        2)  # Test execution interrupted
-            echo "Python tests interrupted" >&2
-            return 2
-            ;;
-        5)  # No tests collected
-            echo "Warning: No Python tests collected" >&2
-            return 0  # Treat as success
-            ;;
-        *)  # Unknown error
-            echo "Python tests encountered unknown error (exit code: $testcode)" >&2
-            return 2
-            ;;
-    esac
+    if [ "$all_passed" = false ]; then
+        return 2
+    else
+        return 0
+    fi
 }
 
 main() {

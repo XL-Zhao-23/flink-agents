@@ -22,11 +22,26 @@ under the License.
     <parent>
         <groupId>org.apache.flink</groupId>
         <artifactId>flink-agents</artifactId>
-        <version>0.2-SNAPSHOT</version>
+        <version>0.3-SNAPSHOT</version>
     </parent>
 
     <artifactId>flink-agents-dist</artifactId>
     <name>Flink Agents : Dist</name>
+    <packaging>pom</packaging>
+
+    <properties>
+        <flink.1.20.version>1.20.3</flink.1.20.version>
+        <flink.2.0.version>2.0.1</flink.2.0.version>
+        <flink.2.1.version>2.1.1</flink.2.1.version>
+        <flink.2.2.version>2.2.0</flink.2.2.version>
+    </properties>
+
+    <modules>
+        <module>flink-1.20</module>
+        <module>flink-2.0</module>
+        <module>flink-2.1</module>
+        <module>flink-2.2</module>
+    </modules>
 
     <dependencies>
         <dependency>
@@ -49,6 +64,36 @@ under the License.
             <artifactId>flink-agents-integrations-chat-models-ollama</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-integrations-chat-models-openai</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-integrations-chat-models-anthropic</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-integrations-chat-models-azureai</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-integrations-embedding-models-ollama</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-integrations-vector-stores-elasticsearch</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-integrations-mcp</artifactId>
+            <version>${project.version}</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -66,7 +111,24 @@ under the License.
                         </goals>
                         <configuration>
                             <shadeTestJar>false</shadeTestJar>
-                            <finalName>${project.artifactId}-${project.version}</finalName>
+                            <shadedArtifactAttached>false</shadedArtifactAttached>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <manifestEntries>
+                                        <Multi-Release>true</Multi-Release>
+                                    </manifestEntries>
+                                </transformer>
+                            </transformers>
                         </configuration>
                     </execution>
                 </executions>

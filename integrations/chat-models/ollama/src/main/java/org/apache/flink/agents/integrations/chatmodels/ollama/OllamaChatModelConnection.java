@@ -180,8 +180,18 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
         try {
+            // convert think to think mode.
+            final Object think = arguments.getOrDefault("think", true);
+            ThinkMode thinkMode = ThinkMode.ENABLED;
+            for (ThinkMode mode : ThinkMode.values()) {
+                if (mode.getValue().equals(think)) {
+                    thinkMode = mode;
+                    break;
+                }
+            }
+
             final boolean extractReasoning =
-                    (boolean) arguments.getOrDefault("extract_reasoning", false);
+                    (boolean) arguments.getOrDefault("extract_reasoning", true);
 
             final List<Tools.Tool> ollamaTools = this.convertToOllamaTools(tools);
             final List<OllamaChatMessage> ollamaChatMessages =
@@ -189,11 +199,12 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
                             .map(this::convertToOllamaChatMessages)
                             .collect(Collectors.toList());
 
+            final String modelName = (String) arguments.get("model");
             final OllamaChatRequest chatRequest =
                     OllamaChatRequest.builder()
                             .withMessages(ollamaChatMessages)
-                            .withModel((String) arguments.get("model"))
-                            .withThinking(extractReasoning ? ThinkMode.ENABLED : ThinkMode.DISABLED)
+                            .withModel(modelName)
+                            .withThinking(thinkMode)
                             .withUseTools(false)
                             .build();
 
@@ -214,6 +225,16 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
             if (ollamaToolCalls != null) {
                 final List<Map<String, Object>> toolCalls = convertToAgentsTools(ollamaToolCalls);
                 chatMessage.setToolCalls(toolCalls);
+            }
+
+            // Record token metrics if model name is available
+            if (modelName != null && !modelName.isBlank()) {
+                Integer promptTokens = ollamaChatResponse.getPromptEvalCount();
+                Integer completionTokens = ollamaChatResponse.getEvalCount();
+                if (promptTokens != null && completionTokens != null) {
+                    recordTokenMetrics(
+                            modelName, promptTokens.longValue(), completionTokens.longValue());
+                }
             }
 
             return chatMessage;

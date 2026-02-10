@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.plan.compatibility;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -25,7 +27,6 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -145,13 +146,14 @@ public class CreateJavaAgentPlanFromJson {
         kwargs.put("name", "chat_model");
         kwargs.put("prompt", "prompt");
         kwargs.put("tools", List.of("add"));
-        PythonResourceProvider resourceProvider =
-                new PythonResourceProvider(
-                        "chat_model",
-                        ResourceType.CHAT_MODEL,
+        ResourceDescriptor chatModelDescriptor =
+                new ResourceDescriptor(
                         "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent",
                         "MockChatModel",
                         kwargs);
+        PythonResourceProvider resourceProvider =
+                new PythonResourceProvider(
+                        "chat_model", ResourceType.CHAT_MODEL, chatModelDescriptor);
 
         Map<String, Object> serialized = new HashMap<>();
 

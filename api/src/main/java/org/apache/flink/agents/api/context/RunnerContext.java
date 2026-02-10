@@ -19,6 +19,7 @@ package org.apache.flink.agents.api.context;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -38,12 +39,30 @@ public interface RunnerContext {
     void sendEvent(Event event);
 
     /**
+     * Gets the sensory memory.
+     *
+     * <p>Sensory memory is similar to short-term memory, but will be auto cleared after agent run
+     * finished. User could use it to store data that does not need to be shared across agent runs.
+     *
+     * @return MemoryObject the root of the sensory memory
+     * @throws Exception if the underlying state backend cannot be accessed
+     */
+    MemoryObject getSensoryMemory() throws Exception;
+
+    /**
      * Gets the short-term memory.
      *
      * @return MemoryObject the root of the short-term memory
      * @throws Exception if the underlying state backend cannot be accessed
      */
     MemoryObject getShortTermMemory() throws Exception;
+
+    /**
+     * Gets the long-term memory.
+     *
+     * @return The long-term memory instance
+     */
+    BaseLongTermMemory getLongTermMemory() throws Exception;
 
     /**
      * Gets the metric group for Flink Agents.
@@ -89,4 +108,30 @@ public interface RunnerContext {
      * @return the option value of the action config.
      */
     Object getActionConfigValue(String key);
+
+    /**
+     * Synchronously executes the provided callable with durable execution support.
+     *
+     * <p>The result will be stored and returned from cache during job recovery. The callable is
+     * executed synchronously, blocking the operator until completion.
+     *
+     * <p>Access to memory and sendEvent are prohibited within the callable.
+     */
+    <T> T durableExecute(DurableCallable<T> callable) throws Exception;
+
+    /**
+     * Asynchronously executes the provided callable with durable execution support.
+     *
+     * <p>On JDK 21+, this method uses Continuation to yield the current action execution, submits
+     * the callable to a thread pool, and resumes when complete. On JDK &lt; 21, this falls back to
+     * synchronous execution.
+     *
+     * <p>The result will be stored and returned from cache during job recovery.
+     *
+     * <p>Access to memory and sendEvent are prohibited within the callable.
+     */
+    <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception;
+
+    /** Clean up the resource. */
+    void close() throws Exception;
 }

@@ -18,14 +18,14 @@
 
 package org.apache.flink.agents.plan.serializer;
 
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.SerializerProvider;
+import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonGenerator;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.SerializerProvider;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ser.std.StdSerializer;
 
 import java.io.IOException;
 
@@ -68,24 +68,7 @@ public class ResourceProviderJsonSerializer extends StdSerializer<ResourceProvid
             throws IOException {
         gen.writeStringField("name", provider.getName());
         gen.writeStringField("type", provider.getType().getValue());
-        gen.writeStringField("module", provider.getModule());
-        gen.writeStringField("clazz", provider.getClazz());
-
-        gen.writeFieldName("kwargs");
-        gen.writeStartObject();
-        provider.getKwargs()
-                .forEach(
-                        (name, value) -> {
-                            try {
-                                gen.writeObjectField(name, value);
-                            } catch (IOException e) {
-                                throw new RuntimeException(
-                                        "Error writing kwargs of PythonResourceProvider: " + name,
-                                        e);
-                            }
-                        });
-        gen.writeEndObject();
-
+        gen.writeObjectField("descriptor", provider.getDescriptor());
         gen.writeStringField("__resource_provider_type__", "PythonResourceProvider");
     }
 

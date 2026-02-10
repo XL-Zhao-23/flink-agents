@@ -21,7 +21,9 @@ from pyflink.common import Duration, WatermarkStrategy
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.file_system import FileSource, StreamFormat
 
+from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+from flink_agents.api.resource import ResourceType
 from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
     ProductReview,
     ollama_server_descriptor,
@@ -46,9 +48,13 @@ def main() -> None:
     env = StreamExecutionEnvironment.get_execution_environment()
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
+    # limit async request to avoid overwhelming ollama server
+    agents_env.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2)
+
     # Add Ollama chat model connection to be used by the ReviewAnalysisAgent.
     agents_env.add_resource(
         "ollama_server",
+        ResourceType.CHAT_MODEL_CONNECTION,
         ollama_server_descriptor,
     )
 

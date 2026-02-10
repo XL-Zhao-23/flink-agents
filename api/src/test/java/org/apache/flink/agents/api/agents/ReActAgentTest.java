@@ -18,11 +18,11 @@
 
 package org.apache.flink.agents.api.agents;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -36,10 +36,9 @@ public class ReActAgentTest {
                             BasicTypeInfo.INT_TYPE_INFO, BasicTypeInfo.STRING_TYPE_INFO
                         },
                         new String[] {"a", "b"});
-        ReActAgent.OutputSchema schema = new ReActAgent.OutputSchema(typeInfo);
+        OutputSchema schema = new OutputSchema(typeInfo);
         String json = mapper.writeValueAsString(schema);
-        ReActAgent.OutputSchema deserialized =
-                mapper.readValue(json, ReActAgent.OutputSchema.class);
+        OutputSchema deserialized = mapper.readValue(json, OutputSchema.class);
         Assertions.assertEquals(typeInfo, deserialized.getSchema());
     }
 }

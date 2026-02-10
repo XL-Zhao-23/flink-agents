@@ -43,7 +43,8 @@ public class PythonActionTask extends ActionTask {
                 "Python action only accept python event, but got " + event);
     }
 
-    public ActionTaskResult invoke() throws Exception {
+    public ActionTaskResult invoke(ClassLoader userCodeClassLoader, PythonActionExecutor executor)
+            throws Exception {
         LOG.debug(
                 "Try execute python action {} for event {} with key {}.",
                 action.getName(),
@@ -51,27 +52,21 @@ public class PythonActionTask extends ActionTask {
                 key);
         runnerContext.checkNoPendingEvents();
 
-        PythonActionExecutor pythonActionExecutor = getPythonActionExecutor();
-        String pythonGeneratorRef =
-                pythonActionExecutor.executePythonFunction(
-                        (PythonFunction) action.getExec(), (PythonEvent) event, runnerContext);
+        String pythonAwaitableRef =
+                executor.executePythonFunction(
+                        (PythonFunction) action.getExec(), (PythonEvent) event, key.hashCode());
         // If a user-defined action uses an interface to submit asynchronous tasks, it will return a
-        // Python generator object instance upon its first execution. Otherwise, it means that no
-        // asynchronous tasks were submitted and the action has already completed.
-        if (pythonGeneratorRef != null) {
-            // The Python action generates a generator. We need to execute it once, which will
+        // Python coroutine (awaitable) object instance upon its first execution. Otherwise, it
+        // means that no asynchronous tasks were submitted and the action has already completed.
+        if (pythonAwaitableRef != null) {
+            // The Python action generates an awaitable. We need to execute it once, which will
             // submit an asynchronous task and return whether the action has been completed.
-            ActionTask tempGeneratedActionTask =
-                    new PythonGeneratorActionTask(key, event, action, pythonGeneratorRef);
+            ((PythonRunnerContextImpl) runnerContext).setPythonAwaitableRef(pythonAwaitableRef);
+            ActionTask tempGeneratedActionTask = new PythonGeneratorActionTask(key, event, action);
             tempGeneratedActionTask.setRunnerContext(runnerContext);
-            return tempGeneratedActionTask.invoke();
+            return tempGeneratedActionTask.invoke(userCodeClassLoader, executor);
         }
         return new ActionTaskResult(
                 true, runnerContext.drainEvents(event.getSourceTimestamp()), null);
-    }
-
-    protected PythonActionExecutor getPythonActionExecutor() {
-        checkState(runnerContext != null && runnerContext instanceof PythonRunnerContextImpl);
-        return ((PythonRunnerContextImpl) runnerContext).getPythonActionExecutor();
     }
 }

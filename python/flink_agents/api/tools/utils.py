@@ -15,12 +15,12 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import typing
 from inspect import signature
-from typing import Any, Callable, Dict, Optional, Type, Union
+from typing import Any, Callable, Optional, Type, Union
 
 from docstring_parser import parse
-from mcp import types
 from pydantic import BaseModel, create_model
 from pydantic.fields import Field, FieldInfo
 
@@ -178,44 +178,53 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
 
     return create_model(name, **main_fields, __doc__=schema.get("description", ""))
 
+def create_model_from_java_tool_schema_str(name: str, schema_str: str) -> type[BaseModel]:
+    """Create Pydantic model from a java tool input schema."""
+    json_schema = json.loads(schema_str)
+    properties = json_schema["properties"]
 
-def extract_mcp_content_item(content_item: Any) -> Dict[str, Any] | str:
-    """Extract and normalize a single MCP content item.
+    fields = {}
+    for param_name in properties:
+        description = properties[param_name]["description"]
+        if description is None:
+            description = f"Parameter: {param_name}"
+        type = TYPE_MAPPING.get(properties[param_name]["type"])
+        fields[param_name] = (type, FieldInfo(description=description))
+    return create_model(name, **fields)
+
+def create_java_tool_schema_str_from_model(model: type[BaseModel]) -> str:
+    """Create a java tool input schema string from a Pydantic model.
+
+    This is the inverse function of create_model_from_java_tool_schema_str.
 
     Args:
-        content_item: A single MCP content item (TextContent, ImageContent, etc.)
+        model: A Pydantic BaseModel class
 
     Returns:
-        Dict representation of the content item
-
-    Raises:
-        ImportError: If MCP types are not available
+        A JSON schema string compatible with Java tool input schema format
     """
-    if types is None:
-        err_msg = "MCP types not available. Please install the mcp package."
-        raise ImportError(err_msg)
+    REVERSE_TYPE_MAPPING = {v: k for k, v in TYPE_MAPPING.items()}
 
-    if isinstance(content_item, types.TextContent):
-        return content_item.text
-    elif isinstance(content_item, types.ImageContent):
-        return {
-            "type": "image",
-            "data": content_item.data,
-            "mimeType": content_item.mimeType
-        }
-    elif isinstance(content_item, types.EmbeddedResource):
-        if isinstance(content_item.resource, types.TextResourceContents):
-            return {
-                "type": "resource",
-                "uri": content_item.resource.uri,
-                "text": content_item.resource.text
-            }
-        elif isinstance(content_item.resource, types.BlobResourceContents):
-            return {
-                "type": "resource",
-                "uri": content_item.resource.uri,
-                "blob": content_item.resource.blob
-            }
-    else:
-        # Handle unknown content types as generic dict
-        return content_item.model_dump() if hasattr(content_item, 'model_dump') else str(content_item)
+    properties = {}
+    for field_name, field_info in model.model_fields.items():
+        field_type = field_info.annotation
+
+        origin = typing.get_origin(field_type)
+        if origin is not None:
+            if origin is typing.Union:
+                args = typing.get_args(field_type)
+                non_none_types = [arg for arg in args if arg is not type(None)]
+                if non_none_types:
+                    field_type = non_none_types[0]
+
+        json_type = REVERSE_TYPE_MAPPING.get(field_type, "string")
+
+        description = field_info.description
+        if description is None:
+            description = f"Parameter: {field_name}"
+
+        properties[field_name] = {"type": json_type, "description": description}
+
+    json_schema = {"properties": properties}
+
+    return json.dumps(json_schema, ensure_ascii=False, indent=2)

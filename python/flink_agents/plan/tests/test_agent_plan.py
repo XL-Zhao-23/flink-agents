@@ -17,11 +17,11 @@
 #################################################################################
 import json
 from pathlib import Path
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, List, Sequence
 
 import pytest
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import (
@@ -110,9 +110,11 @@ class MockChatModelImpl(BaseChatModelSetup):  # noqa: D101
 class MockEmbeddingModelConnection(BaseEmbeddingModelConnection):  # noqa: D101
     api_key: str
 
-    def embed(self, text: str, **kwargs: Any) -> list[float]:
+    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float]:
         """Testing Implementation."""
-        return [0.1234, -0.5678, 0.9012, -0.3456, 0.7890]
+        if isinstance(text, str):
+            return [0.1234, -0.5678, 0.9012, -0.3456, 0.7890]
+        return [[0.1234, -0.5678, 0.9012, -0.3456, 0.7890]]
 
 
 class MockEmbeddingModelSetup(BaseEmbeddingModelSetup):  # noqa: D101
@@ -130,7 +132,35 @@ class MockVectorStore(BaseVectorStore):  # noqa: D101
     def store_kwargs(self) -> Dict[str, Any]:  # noqa: D102
         return {"collection_name": self.collection_name}
 
-    def query_embedding(
+    def size(self, collection_name: str | None = None) -> int:
+        """For Testing."""
+
+    def get(
+        self,
+        ids: str | List[str] | None = None,
+        collection_name: str | None = None,
+        **kwargs: Any,
+    ) -> List[Document]:
+        """For Testing."""
+
+    def delete(
+        self,
+        ids: str | List[str] | None = None,
+        collection_name: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """For Testing."""
+
+    def _add_embedding(
+        self,
+        *,
+        documents: List[Document],
+        collection_name: str | None = None,
+        **kwargs: Any,
+    ) -> List[str]:
+        """For Testing."""
+
+    def _query_embedding(
         self, embedding: list[float], limit: int = 10, **kwargs: Any
     ) -> list[Document]:
         """Testing Implementation."""
@@ -153,7 +183,7 @@ class MyAgent(Agent):  # noqa: D101
     @staticmethod
     def mock() -> ResourceDescriptor:  # noqa: D102
         return ResourceDescriptor(
-            clazz=MockChatModelImpl,
+            clazz=f"{MockChatModelImpl.__module__}.{MockChatModelImpl.__name__}",
             host="8.8.8.8",
             desc="mock resource just for testing.",
             connection="mock",
@@ -163,14 +193,14 @@ class MyAgent(Agent):  # noqa: D101
     @staticmethod
     def mock_embedding_conn() -> ResourceDescriptor:  # noqa: D102
         return ResourceDescriptor(
-            clazz=MockEmbeddingModelConnection, api_key="mock-api-key"
+            clazz=f"{MockEmbeddingModelConnection.__module__}.{MockEmbeddingModelConnection.__name__}", api_key="mock-api-key"
         )
 
     @embedding_model_setup
     @staticmethod
     def mock_embedding() -> ResourceDescriptor:  # noqa: D102
         return ResourceDescriptor(
-            clazz=MockEmbeddingModelSetup,
+            clazz=f"{MockEmbeddingModelSetup.__module__}.{MockEmbeddingModelSetup.__name__}",
             model="test-model",
             connection="mock_embedding_conn",
         )
@@ -179,7 +209,7 @@ class MyAgent(Agent):  # noqa: D101
     @staticmethod
     def mock_vector_store() -> ResourceDescriptor:  # noqa: D102
         return ResourceDescriptor(
-            clazz=MockVectorStore,
+            clazz=f"{MockVectorStore.__module__}.{MockVectorStore.__name__}",
             embedding_model="mock_embedding",
             host="localhost",
             port=8000,
@@ -242,8 +272,9 @@ def test_add_action_and_resource_to_agent() -> None:  # noqa: D103
     )
     my_agent.add_resource(
         name="mock",
+        resource_type=ResourceType.CHAT_MODEL,
         instance=ResourceDescriptor(
-            clazz=MockChatModelImpl,
+            clazz=f"{MockChatModelImpl.__module__}.{MockChatModelImpl.__name__}",
             host="8.8.8.8",
             desc="mock resource just for testing.",
             connection="mock",
@@ -252,22 +283,25 @@ def test_add_action_and_resource_to_agent() -> None:  # noqa: D103
 
     my_agent.add_resource(
         name="mock_embedding_conn",
+        resource_type=ResourceType.EMBEDDING_MODEL_CONNECTION,
         instance=ResourceDescriptor(
-            clazz=MockEmbeddingModelConnection, api_key="mock-api-key"
+            clazz=f"{MockEmbeddingModelConnection.__module__}.{MockEmbeddingModelConnection.__name__}", api_key="mock-api-key"
         ),
     )
     my_agent.add_resource(
         name="mock_embedding",
+        resource_type=ResourceType.EMBEDDING_MODEL,
         instance=ResourceDescriptor(
-            clazz=MockEmbeddingModelSetup,
+            clazz=f"{MockEmbeddingModelSetup.__module__}.{MockEmbeddingModelSetup.__name__}",
             model="test-model",
             connection="mock_embedding_conn",
         ),
     )
     my_agent.add_resource(
         name="mock_vector_store",
+        resource_type=ResourceType.VECTOR_STORE,
         instance=ResourceDescriptor(
-            clazz=MockVectorStore,
+            clazz=f"{MockVectorStore.__module__}.{MockVectorStore.__name__}",
             embedding_model="mock_embedding",
             host="localhost",
             port=8000,

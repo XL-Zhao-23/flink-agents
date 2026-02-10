@@ -15,13 +15,12 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List, cast
+from typing import TYPE_CHECKING, Any, Dict, List, cast
 
 from pydantic import BaseModel, field_serializer, model_validator
 
-from flink_agents.api.agent import Agent
-from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.api.tools.mcp import MCPServer
+from flink_agents.api.agents.agent import Agent
+from flink_agents.api.resource import Resource, ResourceDescriptor, ResourceType
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
 from flink_agents.plan.actions.context_retrieval_action import CONTEXT_RETRIEVAL_ACTION
@@ -36,6 +35,9 @@ from flink_agents.plan.resource_provider import (
     ResourceProvider,
 )
 from flink_agents.plan.tools.function_tool import from_callable
+
+if TYPE_CHECKING:
+    from flink_agents.integrations.mcp.mcp import MCPServer
 
 BUILT_IN_ACTIONS = [CHAT_MODEL_ACTION, TOOL_CALL_ACTION, CONTEXT_RETRIEVAL_ACTION]
 
@@ -58,6 +60,7 @@ class AgentPlan(BaseModel):
     resource_providers: Dict[ResourceType, Dict[str, ResourceProvider]] | None = None
     config: AgentConfiguration | None = None
     __resources: Dict[ResourceType, Dict[str, Resource]] = {}
+    __j_resource_adapter: Any = None
 
     @field_serializer("resource_providers")
     def __serialize_resource_providers(
@@ -133,7 +136,7 @@ class AgentPlan(BaseModel):
                 actions_by_event[event_type].append(action.name)
 
         resource_providers = {}
-        for provider in _get_resource_providers(agent):
+        for provider in _get_resource_providers(agent, config):
             type = provider.type
             if type not in resource_providers:
                 resource_providers[type] = {}
@@ -210,11 +213,25 @@ class AgentPlan(BaseModel):
             self.__resources[type] = {}
         if name not in self.__resources[type]:
             resource_provider = self.resource_providers[type][name]
+            if isinstance(resource_provider, JavaResourceProvider):
+                resource_provider.set_java_resource_adapter(self.__j_resource_adapter)
             resource = resource_provider.provide(
                 get_resource=self.get_resource, config=self.config
             )
             self.__resources[type][name] = resource
         return self.__resources[type][name]
+
+    def set_java_resource_adapter(self, j_resource_adapter: Any) -> None:
+        """Set java resource adapter for java resource provider."""
+        self.__j_resource_adapter = j_resource_adapter
+
+    def close(self) -> None:
+        """Clean up the resources."""
+        for type in self.__resources:
+            for name in self.__resources[type]:
+                self.__resources[type][name].close()
+        self.__resources.clear()
+
 
 
 def _get_actions(agent: Agent) -> List[Action]:
@@ -269,7 +286,7 @@ def _get_actions(agent: Agent) -> List[Action]:
     return actions
 
 
-def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
+def _get_resource_providers(agent: Agent, config: AgentConfiguration) -> List[ResourceProvider]:
     resource_providers = []
     # retrieve resource declared by decorator
     for name, value in agent.__class__.__dict__.items():
@@ -284,9 +301,15 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
                 value = value.__func__
 
             if callable(value):
-                resource_providers.append(
-                    PythonResourceProvider.get(name=name, descriptor=value())
-                )
+                descriptor = value()
+                if hasattr(descriptor.clazz, "_is_java_resource"):
+                    resource_providers.append(
+                        JavaResourceProvider.get(name=name, descriptor=value())
+                    )
+                else:
+                    resource_providers.append(
+                        PythonResourceProvider.get(name=name, descriptor=value())
+                    )
 
         elif hasattr(value, "_is_tool"):
             if isinstance(value, staticmethod):
@@ -313,8 +336,8 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
             if isinstance(value, staticmethod):
                 value = value.__func__
 
-            mcp_server = value()
-            _add_mcp_server(name, resource_providers, mcp_server)
+            descriptor = value()
+            _add_mcp_server(name, resource_providers, descriptor, config)
 
     # retrieve resource declared by add interface
     for name, prompt in agent.resources[ResourceType.PROMPT].items():
@@ -329,9 +352,8 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
             )
         )
 
-    for name, mcp_server in agent.resources[ResourceType.MCP_SERVER].items():
-        mcp_server = cast("MCPServer", mcp_server)
-        _add_mcp_server(name, resource_providers, mcp_server)
+    for name, descriptor in agent.resources[ResourceType.MCP_SERVER].items():
+        _add_mcp_server(name, resource_providers, descriptor)
 
     for resource_type in [
         ResourceType.CHAT_MODEL,
@@ -341,19 +363,30 @@ def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
         ResourceType.VECTOR_STORE,
     ]:
         for name, descriptor in agent.resources[resource_type].items():
-            resource_providers.append(
-                PythonResourceProvider.get(name=name, descriptor=descriptor)
-            )
+            if hasattr(descriptor.clazz, "_is_java_resource"):
+                resource_providers.append(
+                    JavaResourceProvider.get(name=name, descriptor=descriptor)
+                )
+            else:
+                resource_providers.append(
+                    PythonResourceProvider.get(name=name, descriptor=descriptor)
+                )
 
     return resource_providers
 
 
 def _add_mcp_server(
-    name: str, resource_providers: List[ResourceProvider], mcp_server: MCPServer
+    name: str, resource_providers: List[ResourceProvider], descriptor: ResourceDescriptor, config: AgentConfiguration
 ) -> None:
-    resource_providers.append(
-        PythonSerializableResourceProvider.from_resource(name=name, resource=mcp_server)
-    )
+    provider = PythonResourceProvider.get(name=name, descriptor=descriptor)
+
+    resource_providers.append(provider)
+
+    def get_resource(name: str, descriptor: ResourceDescriptor) -> Any:
+        """Placeholder."""
+
+    mcp_server = cast("MCPServer", provider.provide(get_resource=get_resource, config=config))
+
     resource_providers.extend(
         [
             PythonSerializableResourceProvider.from_resource(

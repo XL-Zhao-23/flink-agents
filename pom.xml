@@ -31,7 +31,7 @@ under the License.
     <name>Flink Agents : </name>
     <!-- TODO: build website and update url -->
     <url>https://flink.apache.org</url>
-    <version>0.2-SNAPSHOT</version>
+    <version>0.3-SNAPSHOT</version>
     <packaging>pom</packaging>
 
     <properties>
@@ -41,17 +41,16 @@ under the License.
         <maven.compiler.target>${target.java.version}</maven.compiler.target>
         <spotless.version>2.27.1</spotless.version>
         <spotless.skip>false</spotless.skip>
-        <flink.version>1.20.3</flink.version>
+        <flink.version>2.2.0</flink.version>
         <kafka.version>4.0.0</kafka.version>
         <junit5.version>5.10.1</junit5.version>
-        <flink.shaded.version>17.0</flink.shaded.version>
-        <flink.shaded.jackson.version>2.14.2</flink.shaded.jackson.version>
+        <jackson.version>2.18.2</jackson.version>
         <pemja.version>0.5.5</pemja.version>
         <log4j2.version>2.23.1</log4j2.version>
         <slf4j.version>1.7.36</slf4j.version>
-        <assertj.version>3.23.1</assertj.version>
-        <mockito.version>5.8.0</mockito.version>
-
+        <assertj.version>3.27.7</assertj.version>
+        <mockito.version>5.14.2</mockito.version>
+        <bytebuddy.version>1.15.4</bytebuddy.version>
         <gpg.useagent>true</gpg.useagent>
         <arguments />
     </properties>
@@ -64,7 +63,21 @@ under the License.
         <module>e2e-test</module>
         <module>integrations</module>
         <module>dist</module>
+        <module>ide-support</module>
     </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Jackson BOM (Bill of Materials) Unified management of all Jackson module versions -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -85,9 +98,38 @@ under the License.
             <version>${mockito.version}</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy</artifactId>
+            <version>${bytebuddy.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <profiles>
+        <profile>
+            <id>java-11</id>
+            <activation>
+                <jdk>[11,17)</jdk>
+            </activation>
+            <properties>
+                <target.java.version>11</target.java.version>
+                <maven.compiler.source>11</maven.compiler.source>
+                <maven.compiler.target>11</maven.compiler.target>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>java-21</id>
+            <activation>
+                <jdk>[21,)</jdk>
+            </activation>
+            <properties>
+                <!-- Skip spotless for jdk21, as the version of spotless plugin doesn't support jdk21. -->
+                <spotless.skip>true</spotless.skip>
+            </properties>
+        </profile>
+
         <profile>
             <id>release</id>
             <activation>
@@ -239,7 +281,7 @@ under the License.
                     <skip>${spotless.skip}</skip>
                     <java>
                         <googleJavaFormat>
-                            <version>1.7</version>
+                            <version>1.15.0</version>
                             <style>AOSP</style>
                         </googleJavaFormat>
 
@@ -260,6 +302,16 @@ under the License.
                         </goals>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>
+                        --add-opens=java.base/java.util=ALL-UNNAMED
+                        --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED
+                    </argLine>
+                </configuration>
             </plugin>
         </plugins>
     </build>

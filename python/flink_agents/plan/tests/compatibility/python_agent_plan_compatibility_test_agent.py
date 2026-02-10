@@ -17,7 +17,7 @@
 #################################################################################
 from typing import Any, Dict, Sequence
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import action, chat_model_setup, tool
@@ -60,7 +60,7 @@ class PythonAgentPlanCompatibilityTestAgent(Agent):
     def chat_model() -> ResourceDescriptor:
         """ChatModel can be used in action."""
         return ResourceDescriptor(
-            clazz=MockChatModel, name="chat_model", prompt="prompt", tools=["add"]
+            clazz=f"{MockChatModel.__module__}.{MockChatModel.__name__}", name="chat_model", prompt="prompt", tools=["add"]
         )
 
     @tool

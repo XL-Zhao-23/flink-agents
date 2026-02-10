@@ -47,10 +47,11 @@ agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 # Add Ollama chat model connection and notify shipping manager tool to be used
 # by the Agent.
 agents_env.add_resource(
-    "ollama_server",
-    ResourceDescriptor(clazz=OllamaChatModelConnection, request_timeout=120),
+  "ollama_server",
+  ResourceType.CHAT_MODEL_CONNECTION,
+  ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION, request_timeout=120),
 ).add_resource(
-    "notify_shipping_manager", Tool.from_callable(notify_shipping_manager)
+  "notify_shipping_manager", ResourceType.TOOL, Tool.from_callable(notify_shipping_manager)
 )
 ```
 {{< /tab >}}
@@ -88,14 +89,14 @@ Create the ReAct Agent instance, configure the chat model, prompt and the output
 {{< tab "Python" >}}
 ```python
 review_analysis_react_agent = ReActAgent(
-    chat_model=ResourceDescriptor(
-        clazz=OllamaChatModelSetup,
-        connection="ollama_server",
-        model="qwen3:8b",
-        tools=["notify_shipping_manager"],
-    ),
-    prompt=review_analysis_react_prompt,
-    output_schema=ProductReviewAnalysisRes,
+  chat_model=ResourceDescriptor(
+      clazz=ResourceName.ChatModel.OLLAMA_SETUP,
+      connection="ollama_server",
+      model="qwen3:8b",
+      tools=["notify_shipping_manager"],
+  ),
+  prompt=review_analysis_react_prompt,
+  output_schema=ProductReviewAnalysisRes,
 )
 ```
 {{< /tab >}}
@@ -105,17 +106,17 @@ review_analysis_react_agent = ReActAgent(
 // Create ReAct agent.
 ReActAgent reviewAnalysisReactAgent = getReActAgent();
 
-private static ReActAgent getReActAgent() {
-    return new ReActAgent(
-            ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
-                    .addInitialArgument("connection", "ollamaChatModelConnection")
-                    .addInitialArgument("model", "qwen3:8b")
-                    .addInitialArgument(
-                            "tools", Collections.singletonList("notifyShippingManager"))
-                    .build(),
-            reviewAnalysisReactPrompt(),
-            CustomTypesAndResources.ProductReviewAnalysisRes.class);
-}
+ private static ReActAgent getReActAgent() {
+     return new ReActAgent(
+             ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
+                     .addInitialArgument("connection", "ollamaChatModelConnection")
+                     .addInitialArgument("model", "qwen3:8b")
+                     .addInitialArgument(
+                             "tools", Collections.singletonList("notifyShippingManager"))
+                     .build(),
+             reviewAnalysisReactPrompt(),
+             CustomTypesAndResources.ProductReviewAnalysisRes.class);
+ }
 ```
 {{< /tab >}}
 
@@ -166,15 +167,9 @@ review_analysis_res_stream.print()
 // Each element represents a ProductReview.
 DataStream<Row> productReviewStream =
         env.fromSource(
-                        FileSource.forRecordStreamFormat(
-                                        new TextLineFormat(),
-                                        new Path(
-                                                Objects.requireNonNull(
-                                                                ReActAgentExample.class
-                                                                        .getClassLoader()
-                                                                        .getResource(
-                                                                                "input_data.txt"))
-                                                        .getPath()))
+                FileSource.forRecordStreamFormat(
+                                new TextLineInputFormat(),
+                                new Path(inputDataFile.getAbsolutePath()))
                                 .monitorContinuously(Duration.ofMinutes(1))
                                 .build(),
                         WatermarkStrategy.noWatermarks(),
@@ -213,7 +208,7 @@ reviewAnalysisResStream.print();
 
 * Unix-like environment (we use Linux, Mac OS X, Cygwin, WSL)
 * Git
-* Java 11
+* Java 11+
 * Python 3.10 or 3.11
 
 ### Preparation
@@ -228,6 +223,10 @@ Follow the [installation]({{< ref "docs/get-started/installation" >}}) instructi
 git clone https://github.com/apache/flink-agents.git
 cd flink-agents
 ```
+{{< hint info >}}
+For python examples, you can skip this step and submit the python file in installed flink-agents wheel.
+{{< /hint >}}
+
 
 #### Deploy a Standalone Flink Cluster
 
@@ -238,7 +237,7 @@ You can deploy a standalone Flink cluster in your local environment with the fol
 {{< tab "Python" >}}
 ```bash
 export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
-./flink-1.20.3/bin/start-cluster.sh
+$FLINK_HOME/bin/start-cluster.sh
 ```
 {{< /tab >}}
 
@@ -246,8 +245,12 @@ export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["pu
 1. Build Flink Agents from source to generate example jar. See [installation]({{< ref "docs/get-started/installation" >}}) for more details.
 2. Start the Flink cluster
     ```bash
-    ./flink-1.20.3/bin/start-cluster.sh
+    $FLINK_HOME/bin/start-cluster.sh
     ```
+
+{{< hint info >}}
+To run example on JDK 21+, append jvm option `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to [env.java.opts.all](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/config/#env-java-opts-all) in `$FLINK_HOME/conf/config.yaml` before start the flink cluster.
+{{< /hint >}}
 {{< /tab >}}
 
 {{< /tabs >}}
@@ -255,17 +258,21 @@ You can refer to the [local cluster](https://nightlies.apache.org/flink/flink-do
 
 
 {{< hint info >}}
-If you can't navigate to the web UI at [localhost:8081](localhost:8081), you can find the reason in `./flink-1.20.3/log`. If the reason is port conflict, you can change the port in `./flink-1.20.3/conf/config.yaml`.
+If you can't navigate to the web UI at [localhost:8081](localhost:8081), you can find the reason in `$FLINK_HOME/log`. If the reason is port conflict, you can change the port in `$FLINK_HOME/conf/config.yaml`.
 {{< /hint >}}
 
 #### Prepare Ollama
 
 Download and install Ollama from the official [website](https://ollama.com/download).
 
-Then run the qwen3:8b model, which is required by the quickstart examples
+{{< hint info >}}
+Ollama server **0.9.0** or higher is required.
+{{< /hint >}}
+
+Then pull the qwen3:8b model, which is required by the quickstart examples
 
 ```bash
-ollama run qwen3:8b
+ollama pull qwen3:8b
 ```
 
 ### Submit Flink Agents Job to Standalone Flink Cluster
@@ -279,13 +286,15 @@ ollama run qwen3:8b
 export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
 
 # Run review analysis example
-./flink-1.20.3/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/react_agent_example.py
+$FLINK_HOME/bin/flink run -py ./flink-agents/python/flink_agents/examples/quickstart/react_agent_example.py
+# or submit the example python file in installed flink-agents wheel
+$FLINK_HOME/bin/flink run -py  $PYTHONPATH/flink_agents/examples/quickstart/react_agent_example.py
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```bash
-./flink-1.20.3/bin/flink run -c org.apache.flink.agents.examples.ReActAgentExample ./flink-agents/examples/target/flink-agents-examples-$VERSION.jar
+$FLINK_HOME/bin/flink run -c org.apache.flink.agents.examples.ReActAgentExample ./flink-agents/examples/target/flink-agents-examples-$VERSION.jar
 ```
 {{< /tab >}}
 

@@ -18,26 +18,39 @@
 
 package org.apache.flink.agents.plan;
 
-import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
+import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
+import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
+import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
+import org.apache.flink.agents.api.vectorstores.Document;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import pemja.core.object.PyObject;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Test for {@link AgentPlan} constructor that takes an Agent. */
 public class AgentPlanTest {
@@ -91,6 +104,27 @@ public class AgentPlanTest {
         }
     }
 
+    public static class TestPythonResource extends Resource implements PythonResourceWrapper {
+
+        public TestPythonResource(
+                PythonResourceAdapter adapter,
+                PyObject chatModel,
+                ResourceDescriptor descriptor,
+                BiFunction<String, ResourceType, Resource> getResource) {
+            super(descriptor, getResource);
+        }
+
+        @Override
+        public ResourceType getResourceType() {
+            return ResourceType.CHAT_MODEL;
+        }
+
+        @Override
+        public Object getPythonResource() {
+            return null;
+        }
+    }
+
     /** Test agent class with annotated methods. */
     public static class TestAgent extends Agent {
 
@@ -120,11 +154,93 @@ public class AgentPlanTest {
         private TestSerializableChatModel chatModel =
                 new TestSerializableChatModel("defaultChatModel");
 
+        @ChatModelSetup
+        public static ResourceDescriptor pythonChatModel() {
+            return ResourceDescriptor.Builder.newBuilder(TestPythonResource.class.getName())
+                    .addInitialArgument("pythonClazz", "test.module.TestClazz")
+                    .build();
+        }
+
         @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
         @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
         public void handleInputEvent(InputEvent event, RunnerContext context) {
             // Test action implementation
+        }
+    }
+
+    /** Test agent class with illegal python resource. */
+    public static class TestAgentWithIllegalPythonResource extends Agent {
+        @ChatModelSetup
+        public static ResourceDescriptor reviewAnalysisModel() {
+            return ResourceDescriptor.Builder.newBuilder(TestPythonResource.class.getName())
+                    .build();
+        }
+    }
+
+    public static class TestPythonResourceAdapter implements PythonResourceAdapter {
+
+        @Override
+        public Object getResource(String resourceName, String resourceType) {
+            return null;
+        }
+
+        @Override
+        public PyObject initPythonResource(
+                String module, String clazz, Map<String, Object> kwargs) {
+            return null;
+        }
+
+        @Override
+        public Object toPythonChatMessage(ChatMessage message) {
+            return null;
+        }
+
+        @Override
+        public ChatMessage fromPythonChatMessage(Object pythonChatMessage) {
+            return null;
+        }
+
+        @Override
+        public Object toPythonDocuments(List<Document> documents) {
+            return null;
+        }
+
+        @Override
+        public List<Document> fromPythonDocuments(List<PyObject> pythonDocuments) {
+            return List.of();
+        }
+
+        @Override
+        public Object toPythonVectorStoreQuery(VectorStoreQuery query) {
+            return null;
+        }
+
+        @Override
+        public VectorStoreQueryResult fromPythonVectorStoreQueryResult(
+                PyObject pythonVectorStoreQueryResult) {
+            return null;
+        }
+
+        @Override
+        public CollectionManageableVectorStore.Collection fromPythonCollection(
+                PyObject pythonCollection) {
+            return null;
+        }
+
+        @Override
+        public Object convertToPythonTool(org.apache.flink.agents.api.tools.Tool tool) {
+            return null;
+        }
+
+        @Override
+        public Object callMethod(Object obj, String methodName, Map<String, Object> kwargs) {
+            return null;
+        }
+
+        @Override
+        public Object invoke(String name, Object... args) {
+            return null;
         }
     }
 
@@ -137,7 +253,7 @@ public class AgentPlanTest {
         AgentPlan agentPlan = new AgentPlan(agent);
 
         // Verify that actions were collected correctly
-        assertThat(agentPlan.getActions().size()).isEqualTo(4);
+        assertThat(agentPlan.getActions().size()).isEqualTo(5);
         assertThat(agentPlan.getActions()).containsKey("handleInputEvent");
         assertThat(agentPlan.getActions()).containsKey("handleMultipleEvents");
 
@@ -164,7 +280,7 @@ public class AgentPlanTest {
         assertThat(multiAction.getExec()).isInstanceOf(JavaFunction.class);
 
         // Verify actionsByEvent mapping
-        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(6);
+        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(7);
 
         // Check InputEvent mapping
         List<Action> inputEventActions =
@@ -199,8 +315,8 @@ public class AgentPlanTest {
         AgentPlan agentPlan = new AgentPlan(emptyAgent);
 
         // Verify that no actions were collected
-        assertThat(agentPlan.getActions().size()).isEqualTo(2);
-        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(3);
+        assertThat(agentPlan.getActions().size()).isEqualTo(3);
+        assertThat(agentPlan.getActionsByEvent().size()).isEqualTo(4);
     }
 
     @Test
@@ -303,8 +419,9 @@ public class AgentPlanTest {
         Map<String, ResourceProvider> chatModelProviders =
                 resourceProviders.get(ResourceType.CHAT_MODEL);
         assertThat(chatModelProviders).isNotNull();
-        assertThat(chatModelProviders).hasSize(1); // defaultChatModel (field name used as default)
+        assertThat(chatModelProviders).hasSize(2); // defaultChatModel (field name used as default)
         assertThat(chatModelProviders).containsKey("chatModel");
+        assertThat(chatModelProviders).containsKey("pythonChatModel");
 
         // Verify that chat model provider is JavaSerializableResourceProvider
         // (serializable)
@@ -319,6 +436,13 @@ public class AgentPlanTest {
         assertThat(serializableProvider.getModule())
                 .isEqualTo(TestAgentWithResources.class.getPackage().getName());
         assertThat(serializableProvider.getClazz()).contains("TestSerializableChatModel");
+
+        // Verify that python chat model provider is PythonResourceProvider
+        // (serializable)
+        ResourceProvider pythonChatModelProvider = chatModelProviders.get("pythonChatModel");
+        assertThat(pythonChatModelProvider).isInstanceOf(PythonResourceProvider.class);
+        assertThat(pythonChatModelProvider.getName()).isEqualTo("pythonChatModel");
+        assertThat(pythonChatModelProvider.getType()).isEqualTo(ResourceType.CHAT_MODEL);
     }
 
     @Test
@@ -338,6 +462,17 @@ public class AgentPlanTest {
         assertThat(chatModel).isNotNull();
         assertThat(chatModel).isInstanceOf(TestSerializableChatModel.class);
         assertThat(chatModel.getResourceType()).isEqualTo(ResourceType.CHAT_MODEL);
+
+        assertThatThrownBy(() -> agentPlan.getResource("pythonChatModel", ResourceType.CHAT_MODEL))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("PythonResourceAdapter is not set");
+
+        agentPlan.setPythonResourceAdapter(new TestPythonResourceAdapter());
+        Resource pythonChatModel =
+                agentPlan.getResource("pythonChatModel", ResourceType.CHAT_MODEL);
+        assertThat(pythonChatModel).isNotNull();
+        assertThat(pythonChatModel).isInstanceOf(PythonChatModelSetup.class);
+        assertThat(pythonChatModel.getResourceType()).isEqualTo(ResourceType.CHAT_MODEL);
 
         // Test that resources are cached (should be the same instance)
         Resource myToolAgain = agentPlan.getResource("myTool", ResourceType.TOOL);

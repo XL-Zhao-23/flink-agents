@@ -20,25 +20,39 @@ package org.apache.flink.agents.runtime.python.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionTask;
+import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 
-/** An {@link ActionTask} wrapper a Python Generator to represent a code block in Python action. */
+/** An {@link ActionTask} wrapper a Python awaitable to represent a code block in Python action. */
 public class PythonGeneratorActionTask extends PythonActionTask {
-    private final String pythonGeneratorRef;
 
-    public PythonGeneratorActionTask(
-            Object key, Event event, Action action, String pythonGeneratorRef) {
+    public PythonGeneratorActionTask(Object key, Event event, Action action) {
         super(key, event, action);
-        this.pythonGeneratorRef = pythonGeneratorRef;
     }
 
     @Override
-    public ActionTaskResult invoke() {
+    public ActionTaskResult invoke(ClassLoader userCodeClassLoader, PythonActionExecutor executor)
+            throws Exception {
         LOG.debug(
-                "Try execute python generator action {} for event {} with key {}.",
+                "Try execute python awaitable action {} for event {} with key {}.",
                 action.getName(),
                 event,
                 key);
-        boolean finished = getPythonActionExecutor().callPythonGenerator(pythonGeneratorRef);
+
+        String pythonAwaitableRef =
+                ((PythonRunnerContextImpl) runnerContext).getPythonAwaitableRef();
+
+        if (pythonAwaitableRef == null) {
+            LOG.info(
+                    "Python awaitable ref is null for action {} (likely restored from checkpoint), "
+                            + "re-executing from beginning.",
+                    action.getName());
+            PythonActionTask freshTask = new PythonActionTask(key, event, action);
+            freshTask.setRunnerContext(runnerContext);
+            return freshTask.invoke(userCodeClassLoader, executor);
+        }
+
+        boolean finished = executor.callPythonAwaitable(pythonAwaitableRef);
         ActionTask generatedActionTask = finished ? null : this;
         return new ActionTaskResult(
                 finished,

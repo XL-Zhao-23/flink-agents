@@ -1,6 +1,6 @@
 ---
 title: Tool Use
-weight: 7
+weight: 8
 type: docs
 ---
 <!--
@@ -64,7 +64,7 @@ class ReviewAnalysisAgent(Agent):
     def review_analysis_model() -> ResourceDescriptor:
         """ChatModel which focus on review analysis."""
         return ResourceDescriptor(
-            clazz=OllamaChatModelSetup,
+            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             ...,
             tools=["notify_shipping_manager"], # reference the tool by its name
         )
@@ -85,7 +85,7 @@ public class ReviewAnalysisAgent extends Agent {
     
     @ChatModelSetup
     public static ResourceDescriptor reviewAnalysisModel() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
                 ...
                 .addInitialArgument("tools", Collections.singletonList("notifyShippingManager")) // reference the tool by its name
@@ -129,7 +129,7 @@ def notify_shipping_manager(id: str, review: str) -> None:
 
 # Add notify shipping manager tool to the execution environment.
 agents_env.add_resource(
-    "notify_shipping_manager", Tool.from_callable(notify_shipping_manager)
+    "notify_shipping_manager", ResourceType.TOOL, Tool.from_callable(notify_shipping_manager)
 )
 
 ...
@@ -137,7 +137,7 @@ agents_env.add_resource(
 # Create react agent with notify shipping manager tool.
 review_analysis_react_agent = ReActAgent(
     chat_model=ResourceDescriptor(
-        clazz=OllamaChatModelSetup,
+        clazz=ResourceName.ChatModel.OLLAMA_SETUP,
         tools=["notify_shipping_manager"], # reference the tool by its name
     ),
     ...
@@ -164,7 +164,7 @@ agentsEnv
 
 // Create react agent with notify shipping manager tool.
 ReActAgent reviewAnalysisReactAgent = new ReActAgent(
-        ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+        ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument(
                         "tools", Collections.singletonList("notifyShippingManager")) // reference the tool by its name
                 ...
@@ -181,71 +181,4 @@ ReActAgent reviewAnalysisReactAgent = new ReActAgent(
 
 ## MCP Tool
 
-{{< hint info >}}
-MCP (Model Context Protocol) is a standardized protocol for integrating AI applications with external data sources and tools. MCP tools allow dynamic tool retrieval from MCP servers.
-{{< /hint >}}
-
-{{< hint warning >}}
-MCP Tool is only supported in python currently.
-{{< /hint >}}
-
-MCP tools are managed by external MCP servers and automatically discovered when you define an MCP server connection in your agent.
-
-### Define MCP Server with Tools
-
-Create an MCP server that exposes tools using the `FastMCP` library:
-
-```python
-# mcp_server.py
-mcp = FastMCP("ReviewServer")
-
-@mcp.tool()
-async def notify_shipping_manager(id: str, review: str) -> None:
-    """Notify the shipping manager when product received a negative review due to
-    shipping damage.
-
-    Parameters
-    ----------
-    id : str
-        The id of the product that received a negative review due to shipping damage
-    review: str
-        The negative review content
-    """
-    ...
-
-mcp.run("streamable-http")
-```
-
-**Key points:**
-- Use `@mcp.tool()` decorator to define tools
-- The function name becomes the tool identifier
-
-### Use MCP Tools in Agent
-
-Connect to the MCP server and use its tools in your agent:
-
-```python
-class ReviewAnalysisAgent(Agent):
-    ...
-
-    @mcp_server
-    @staticmethod
-    def review_mcp_server() -> MCPServer:
-        """Connect to MCP server."""
-        return MCPServer(endpoint="http://127.0.0.1:8000/mcp")
-
-    @chat_model_setup
-    @staticmethod
-    def review_model() -> ResourceDescriptor:
-        return ResourceDescriptor(
-            clazz=OllamaChatModelSetup,
-            connection="ollama_server",
-            model="qwen3:8b",
-            tools=["notify_shipping_manager"],  # Reference MCP tool by name
-        )
-```
-
-**Key points:**
-- Use `@mcp_server` decorator to define MCP server connection
-- Reference MCP tools by their function name (e.g., `"notify_shipping_manager"`)
-- All tools from the MCP server are automatically registered
+See [MCP]({{< ref "docs/development/mcp" >}}) for details.

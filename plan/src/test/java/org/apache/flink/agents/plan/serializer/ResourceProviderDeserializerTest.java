@@ -18,11 +18,12 @@
 
 package org.apache.flink.agents.plan.serializer;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -48,16 +49,16 @@ public class ResourceProviderDeserializerTest {
         PythonResourceProvider pythonResourceProvider = (PythonResourceProvider) provider;
         assertEquals("my_chat_model", pythonResourceProvider.getName());
         assertEquals(ResourceType.CHAT_MODEL, pythonResourceProvider.getType());
-        assertEquals(
-                "flink_agents.plan.tests.test_resource_provider",
-                pythonResourceProvider.getModule());
-        assertEquals("MockChatModelImpl", pythonResourceProvider.getClazz());
+
+        ResourceDescriptor descriptor = pythonResourceProvider.getDescriptor();
+        assertEquals("flink_agents.plan.tests.test_resource_provider", descriptor.getModule());
+        assertEquals("MockChatModelImpl", descriptor.getClazz());
 
         Map<String, Object> kwargs = new HashMap<>();
         kwargs.put("host", "8.8.8.8");
         kwargs.put("desc", "mock chat model");
 
-        assertEquals(kwargs, pythonResourceProvider.getKwargs());
+        assertEquals(kwargs, descriptor.getInitialArguments());
     }
 
     @Test

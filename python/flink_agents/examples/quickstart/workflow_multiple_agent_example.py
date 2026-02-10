@@ -18,29 +18,35 @@
 from pathlib import Path
 from typing import Iterable
 
-from pyflink.common import Duration, Time, WatermarkStrategy
+from pyflink.common import Configuration, Time
 from pyflink.datastream import (
     ProcessWindowFunction,
     StreamExecutionEnvironment,
 )
-from pyflink.datastream.connectors.file_system import FileSource, StreamFormat
 from pyflink.datastream.window import TumblingProcessingTimeWindows
+from pyflink.table import DataTypes, Schema, StreamTableEnvironment, TableDescriptor
+from pyflink.table.expressions import col
 
+from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+from flink_agents.api.resource import ResourceType
 from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
+    ProductReviewSummary,
     ollama_server_descriptor,
 )
 from flink_agents.examples.quickstart.agents.product_suggestion_agent import (
-    ProductReviewSummary,
     ProductSuggestionAgent,
 )
 from flink_agents.examples.quickstart.agents.review_analysis_agent import (
-    ProductReview,
     ProductReviewAnalysisRes,
-    ReviewAnalysisAgent,
+)
+from flink_agents.examples.quickstart.agents.table_review_analysis_agent import (
+    TableKeySelector,
+    TableReviewAnalysisAgent,
 )
 
 current_dir = Path(__file__).parent
+
 
 class AggregateScoreDistributionAndDislikeReasons(ProcessWindowFunction):
     """Aggregate score distribution and dislike reasons."""
@@ -75,7 +81,7 @@ def main() -> None:
     """Main function for the product improvement suggestion quickstart example.
 
     This example demonstrates a multi-stage streaming pipeline using Flink Agents:
-      1. Reads product reviews from a text file as a streaming source.
+      1. Reads product reviews from a JSON file using Flink Table API.
       2. Uses an LLM agent to analyze each review and extract score and unsatisfied
          reasons.
       3. Aggregates the analysis results in 1-minute tumbling windows, producing score
@@ -85,40 +91,61 @@ def main() -> None:
       5. Prints the final suggestions to stdout.
     """
     # Set up the Flink streaming environment and the Agents execution environment.
-    env = StreamExecutionEnvironment.get_execution_environment()
-    agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
+    config = Configuration()
+    config.set_string("pipeline.auto-watermark-interval", "1ms")
+    config.set_string("python.fn-execution.bundle.size", "1")
+    env = StreamExecutionEnvironment.get_execution_environment(config)
+    env.set_parallelism(1)
+
+    # Create StreamTableEnvironment for Table API support.
+    t_env = StreamTableEnvironment.create(stream_execution_environment=env)
+
+    # Create AgentsExecutionEnvironment with both env and t_env to enable
+    # Table API integration.
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(
+        env=env, t_env=t_env
+    )
+
+    # limit async request to avoid overwhelming ollama server
+    agents_env.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2)
 
     # Add Ollama chat model connection to be used by the ReviewAnalysisAgent
     # and ProductSuggestionAgent.
     agents_env.add_resource(
         "ollama_server",
+        ResourceType.CHAT_MODEL_CONNECTION,
         ollama_server_descriptor,
     )
 
-    # Read product reviews from a text file as a streaming source.
+    # Read product reviews from a JSON file using Flink Table API.
     # Each line in the file should be a JSON string representing a ProductReview.
-    product_review_stream = env.from_source(
-        source=FileSource.for_record_stream_format(
-            StreamFormat.text_line_format(),
-            f"file:///{current_dir}/resources/product_review.txt",
+    # Define the source table with watermark based on the 'ts' column.
+    t_env.create_temporary_table(
+        "product_reviews",
+        TableDescriptor.for_connector("filesystem")
+        .schema(
+            Schema.new_builder()
+            .column("id", DataTypes.STRING())
+            .column("review", DataTypes.STRING())
+            .column("ts", DataTypes.BIGINT())
+            .column_by_expression("rowtime", "TO_TIMESTAMP_LTZ(`ts` * 1000, 3)")
+            .watermark("rowtime", "rowtime - INTERVAL '0' SECOND")
+            .build()
         )
-        .monitor_continuously(Duration.of_minutes(1))
+        .option("format", "json")
+        .option("path", f"file:///{current_dir}/resources/product_review.txt")
         .build(),
-        watermark_strategy=WatermarkStrategy.no_watermarks(),
-        source_name="streaming_agent_example",
-    ).map(
-        lambda x: ProductReview.model_validate_json(
-            x
-        )  # Deserialize JSON to ProductReview.
     )
 
-    # Use the ReviewAnalysisAgent (LLM) to analyze each review.
+    input_table = t_env.from_path("product_reviews").select(
+        col("id"), col("review"), col("ts")
+    )
+
+    # Use the TableReviewAnalysisAgent (LLM) to analyze each review.
     # The agent extracts the review score and unsatisfied reasons.
     review_analysis_res_stream = (
-        agents_env.from_datastream(
-            input=product_review_stream, key_selector=lambda x: x.id
-        )
-        .apply(ReviewAnalysisAgent())
+        agents_env.from_table(input=input_table, key_selector=TableKeySelector())
+        .apply(TableReviewAnalysisAgent())
         .to_datastream()
     )
 

@@ -20,12 +20,14 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -70,8 +72,24 @@ public abstract class ActionTask {
         return key;
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        ActionTask other = (ActionTask) o;
+        return Objects.equals(this.key, other.key)
+                && Objects.equals(this.event, other.event)
+                && Objects.equals(this.action, other.action);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(key, event, action);
+    }
+
     /** Invokes the action task. */
-    public abstract ActionTaskResult invoke() throws Exception;
+    public abstract ActionTaskResult invoke(
+            ClassLoader userCodeClassLoader, PythonActionExecutor executor) throws Exception;
 
     public class ActionTaskResult {
         private final boolean finished;

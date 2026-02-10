@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Literal, Sequence
 import httpx
 from openai import NOT_GIVEN, OpenAI
 from pydantic import Field, PrivateAttr
+from typing_extensions import override
 
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
@@ -171,9 +172,25 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             **kwargs,
         )
 
-        response = response.choices[0].message
+        extra_args = {}
+        # Record token metrics if model name and usage are available
+        model_name = kwargs.get("model")
+        if model_name and response.usage:
+            extra_args["model_name"] = model_name
+            extra_args["promptTokens"] = response.usage.prompt_tokens
+            extra_args["completionTokens"] = response.usage.completion_tokens
 
-        return convert_from_openai_message(response)
+        message = response.choices[0].message
+
+        return convert_from_openai_message(message, extra_args)
+
+    @override
+    def close(self) -> None:
+        if self._client is not None:
+            try:
+                self._client.close()
+            finally:
+                self._client = None
 
 
 DEFAULT_TEMPERATURE = 0.1

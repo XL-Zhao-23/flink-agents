@@ -15,16 +15,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.flink.agents.runtime.python.context;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
-import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.event.PythonEvent;
-import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.util.Preconditions;
 
 import javax.annotation.concurrent.NotThreadSafe;
@@ -33,16 +32,18 @@ import javax.annotation.concurrent.NotThreadSafe;
 @NotThreadSafe
 public class PythonRunnerContextImpl extends RunnerContextImpl {
 
-    private final PythonActionExecutor pythonActionExecutor;
+    /**
+     * Reference to the Python awaitable object in the interpreter. This is set when a Python action
+     * yields an awaitable and is used by PythonGeneratorActionTask to resume execution.
+     */
+    private String pythonAwaitableRef;
 
     public PythonRunnerContextImpl(
-            CachedMemoryStore store,
             FlinkAgentsMetricGroupImpl agentMetricGroup,
             Runnable mailboxThreadChecker,
             AgentPlan agentPlan,
-            PythonActionExecutor pythonActionExecutor) {
-        super(store, agentMetricGroup, mailboxThreadChecker, agentPlan);
-        this.pythonActionExecutor = pythonActionExecutor;
+            String jobIdentifier) {
+        super(agentMetricGroup, mailboxThreadChecker, agentPlan, jobIdentifier);
     }
 
     @Override
@@ -52,12 +53,16 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
         super.sendEvent(event);
     }
 
-    public void sendEvent(String type, byte[] event) {
+    public void sendEvent(String type, byte[] event, String eventJsonStr) {
         // this method will be invoked by PythonActionExecutor's python interpreter.
-        sendEvent(new PythonEvent(event, type));
+        sendEvent(new PythonEvent(event, type, eventJsonStr));
     }
 
-    public PythonActionExecutor getPythonActionExecutor() {
-        return pythonActionExecutor;
+    public String getPythonAwaitableRef() {
+        return pythonAwaitableRef;
+    }
+
+    public void setPythonAwaitableRef(String pythonAwaitableRef) {
+        this.pythonAwaitableRef = pythonAwaitableRef;
     }
 }

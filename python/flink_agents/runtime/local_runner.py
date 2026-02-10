@@ -15,19 +15,22 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import asyncio
 import logging
 import uuid
 from collections import deque
-from typing import Any, Callable, Dict, Generator, List, Tuple
+from concurrent.futures import Future
+from typing import Any, Callable, Dict, List
 
 from typing_extensions import override
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
-from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
+from flink_agents.api.memory_object import MemoryObject, MemoryType
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.runner_context import AsyncExecutionResult, RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.agent_runner import AgentRunner
@@ -54,15 +57,19 @@ class LocalRunnerContext(RunnerContext):
         Name of the action being executed.
     """
 
-    __agent_plan: AgentPlan
+    __agent_plan: AgentPlan | None
     __key: Any
     events: deque[Event]
     action_name: str
-    _store: dict[str, Any]
+    _sensory_mem_store: dict[str, Any]
+    _short_term_mem_store: dict[str, Any]
+    _sensory_memory: MemoryObject
     _short_term_memory: MemoryObject
     _config: AgentConfiguration
 
-    def __init__(self, agent_plan: AgentPlan, key: Any, config: AgentConfiguration) -> None:
+    def __init__(
+        self, agent_plan: AgentPlan, key: Any, config: AgentConfiguration
+    ) -> None:
         """Initialize a new context with the given agent and key.
 
         Parameters
@@ -76,9 +83,15 @@ class LocalRunnerContext(RunnerContext):
         self.__agent_plan = agent_plan
         self.__key = key
         self.events = deque()
-        self._store = {}
+        self._sensory_mem_store = {}
+        self._short_term_mem_store = {}
+        self._sensory_memory = LocalMemoryObject(
+            MemoryType.SENSORY, self._sensory_mem_store, LocalMemoryObject.ROOT_KEY
+        )
         self._short_term_memory = LocalMemoryObject(
-            self._store, LocalMemoryObject.ROOT_KEY
+            MemoryType.SHORT_TERM,
+            self._short_term_mem_store,
+            LocalMemoryObject.ROOT_KEY,
         )
         self._config = config
 
@@ -106,7 +119,7 @@ class LocalRunnerContext(RunnerContext):
         self.events.append(event)
 
     @override
-    def get_resource(self, name: str, type: ResourceType) -> Resource:
+    def get_resource(self, name: str, type: ResourceType, metric_group: MetricGroup = None) -> Resource:
         return self.__agent_plan.get_resource(name, type)
 
     @property
@@ -124,6 +137,18 @@ class LocalRunnerContext(RunnerContext):
 
     @property
     @override
+    def sensory_memory(self) -> MemoryObject:
+        """Get the sensory memory object associated with this context.
+
+        Returns:
+        -------
+        MemoryObject
+            The root object of the short-term memory.
+        """
+        return self._sensory_memory
+
+    @property
+    @override
     def short_term_memory(self) -> MemoryObject:
         """Get the short-term memory object associated with this context.
 
@@ -133,6 +158,12 @@ class LocalRunnerContext(RunnerContext):
             The root object of the short-term memory.
         """
         return self._short_term_memory
+
+    @property
+    @override
+    def long_term_memory(self) -> BaseLongTermMemory:
+        err_msg = "Long-Term Memory is not supported for local agent execution yet."
+        raise NotImplementedError(err_msg)
 
     @property
     @override
@@ -148,26 +179,74 @@ class LocalRunnerContext(RunnerContext):
         err_msg = "Metric mechanism is not supported for local agent execution yet."
         raise NotImplementedError(err_msg)
 
-    def execute_async(
+    @override
+    def durable_execute(
         self,
         func: Callable[[Any], Any],
-        *args: Tuple[Any, ...],
-        **kwargs: Dict[str, Any],
+        *args: Any,
+        **kwargs: Any,
     ) -> Any:
-        """Asynchronously execute the provided function. Access to memory
+        """Synchronously execute the provided function. Access to memory
         is prohibited within the function.
+
+        Note: Local runner does not support durable execution, so recovery
+        is not available.
         """
         logger.warning(
-            "Local runner does not support asynchronous execution; falling back to synchronous execution."
+            "Local runner does not support durable execution; recovery is not available."
         )
-        func_result = func(*args, **kwargs)
-        yield
-        return func_result
+        return func(*args, **kwargs)
+
+    @override
+    def durable_execute_async(
+        self,
+        func: Callable[[Any], Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncExecutionResult:
+        """Asynchronously execute the provided function. Access to memory
+        is prohibited within the function.
+
+        Note: Local runner executes synchronously but returns an AsyncExecutionResult
+        for API consistency. Durable execution is not supported.
+        """
+        logger.warning(
+            "Local runner does not support durable execution; recovery is not available."
+        )
+        # Execute synchronously and wrap the result in a completed Future
+        future: Future = Future()
+        try:
+            result = func(*args, **kwargs)
+            future.set_result(result)
+        except Exception as e:
+            future.set_exception(e)
+
+        # Create a mock executor that returns the pre-completed future
+        class _SyncExecutor:
+            def __init__(self, completed_future: Future) -> None:
+                self._future = completed_future
+
+            def submit(self, fn: Callable, *args: Any, **kwargs: Any) -> Future:
+                return self._future
+
+        return AsyncExecutionResult(_SyncExecutor(future), func, args, kwargs)
 
     @property
     @override
     def config(self) -> AgentConfiguration:
         return self._config
+
+    def clear_sensory_memory(self) -> None:
+        """Clean up sensory memory."""
+        self._sensory_mem_store.clear()
+
+    def close(self) -> None:
+        """Cleanup the resource."""
+        if self.__agent_plan is not None:
+            try:
+                self.__agent_plan.close()
+            finally:
+                self.__agent_plan = None
 
 
 class LocalRunner(AgentRunner):
@@ -226,8 +305,11 @@ class LocalRunner(AgentRunner):
             key = uuid.uuid4()
 
         if key not in self.__keyed_contexts:
-            self.__keyed_contexts[key] = LocalRunnerContext(self.__agent_plan, key, self.__config)
+            self.__keyed_contexts[key] = LocalRunnerContext(
+                self.__agent_plan, key, self.__config
+            )
         context = self.__keyed_contexts[key]
+        context.clear_sensory_memory()
 
         if "value" in data:
             input_event = InputEvent(input=data["value"])
@@ -249,10 +331,14 @@ class LocalRunner(AgentRunner):
                 logger.info("key: %s, performing action: %s", key, action.name)
                 context.action_name = action.name
                 func_result = action.exec(event, context)
-                if isinstance(func_result, Generator):
+                if asyncio.iscoroutine(func_result):
+                    # Drive the coroutine to completion using send()
                     try:
-                        for _ in func_result:
-                            pass
+                        while True:
+                            func_result.send(None)
+                    except StopIteration:
+                        # Coroutine completed normally
+                        pass
                     except Exception:
                         logger.exception("Error in async execution")
                         raise

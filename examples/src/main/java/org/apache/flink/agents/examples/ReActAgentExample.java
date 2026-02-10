@@ -19,17 +19,18 @@ package org.apache.flink.agents.examples;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.ReActAgent;
 import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.examples.agents.CustomTypesAndResources;
-import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.connector.file.src.FileSource;
-import org.apache.flink.connector.file.src.reader.TextLineFormat;
+import org.apache.flink.connector.file.src.reader.TextLineInputFormat;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -83,6 +84,9 @@ public class ReActAgentExample {
         AgentsExecutionEnvironment agentsEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
 
+        // limit async request to avoid overwhelming ollama server
+        agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
+
         // Add Ollama chat model connection and record shipping question tool to be used
         // by the Agent.
         agentsEnv
@@ -105,7 +109,7 @@ public class ReActAgentExample {
         DataStream<Row> productReviewStream =
                 env.fromSource(
                                 FileSource.forRecordStreamFormat(
-                                                new TextLineFormat(),
+                                                new TextLineInputFormat(),
                                                 new Path(inputDataFile.getAbsolutePath()))
                                         .monitorContinuously(Duration.ofMinutes(1))
                                         .build(),
@@ -144,7 +148,7 @@ public class ReActAgentExample {
     // Create ReAct agent.
     private static ReActAgent getReActAgent() {
         return new ReActAgent(
-                ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+                ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                         .addInitialArgument("connection", "ollamaChatModelConnection")
                         .addInitialArgument("model", "qwen3:8b")
                         .addInitialArgument(

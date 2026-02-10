@@ -24,13 +24,14 @@ from pyflink.common import TypeInformation
 from pyflink.datastream import DataStream, KeySelector, StreamExecutionEnvironment
 from pyflink.table import Schema, StreamTableEnvironment, Table
 
-from flink_agents.api.agent import Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.configuration import Configuration
 from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceType,
     SerializableResource,
 )
+from flink_agents.api.version_compatibility import flink_version_manager
 
 
 class AgentBuilder(ABC):
@@ -127,11 +128,30 @@ class AgentsExecutionEnvironment(ABC):
                 "flink_agents.runtime.local_execution_environment"
             ).create_instance(env=env, t_env=t_env, **kwargs)
         else:
-            for path in files("flink_agents.lib").iterdir():
-                env.add_jars(f"file://{path}")
-            return importlib.import_module(
-                "flink_agents.runtime.remote_execution_environment"
-            ).create_instance(env=env, t_env=t_env, **kwargs)
+            major_version = flink_version_manager.major_version
+            if major_version:
+                # Determine the version-specific lib directory
+                version_dir = f"flink-{major_version}"
+                lib_base = files("flink_agents.lib")
+                version_lib = lib_base / version_dir
+
+                # Check if version-specific directory exists
+                if version_lib.is_dir():
+                    for jar_file in version_lib.iterdir():
+                        if jar_file.is_file() and str(jar_file).endswith(".jar"):
+                            env.add_jars(f"file://{jar_file}")
+                else:
+                    err_msg = (
+                        f"Flink Agents dist JAR for Flink {major_version} not found."
+                    )
+                    raise FileNotFoundError(err_msg)
+
+                return importlib.import_module(
+                    "flink_agents.runtime.remote_execution_environment"
+                ).create_instance(env=env, t_env=t_env, **kwargs)
+            else:
+                err_msg = "Apache Flink is not installed."
+                raise ModuleNotFoundError(err_msg)
 
     @abstractmethod
     def get_config(self, path: str | None = None) -> Configuration:
@@ -206,7 +226,7 @@ class AgentsExecutionEnvironment(ABC):
         """Execute agent individually."""
 
     def add_resource(
-        self, name: str, instance: SerializableResource | ResourceDescriptor
+        self, name: str, resource_type: ResourceType, instance: SerializableResource | ResourceDescriptor
     ) -> "AgentsExecutionEnvironment":
         """Register resource to agent execution environment.
 
@@ -214,6 +234,8 @@ class AgentsExecutionEnvironment(ABC):
         ----------
         name : str
             The name of the prompt, should be unique in the same Agent.
+        resource_type: ResourceType
+            The type of the resource.
         instance: SerializableResource | ResourceDescriptor
             The serializable resource instance, or the descriptor of resource.
 
@@ -222,14 +244,6 @@ class AgentsExecutionEnvironment(ABC):
         AgentsExecutionEnvironment
             The environment to register the resource.
         """
-        if isinstance(instance, SerializableResource):
-            resource_type = instance.resource_type()
-        elif isinstance(instance, ResourceDescriptor):
-            resource_type = instance.clazz.resource_type()
-        else:
-            err_msg = f"Unexpected resource {instance}"
-            raise TypeError(err_msg)
-
         if name in self._resources[resource_type]:
             msg = f"{resource_type.value} {name} already defined"
             raise ValueError(msg)

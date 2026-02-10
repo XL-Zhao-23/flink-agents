@@ -18,13 +18,14 @@
 
 package org.apache.flink.agents.runtime.eventlog;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonParser;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.DeserializationContext;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonDeserializer;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 
@@ -51,24 +52,21 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
         ObjectMapper mapper = (ObjectMapper) parser.getCodec();
         JsonNode rootNode = mapper.readTree(parser);
 
-        // Deserialize context
-        JsonNode contextNode = rootNode.get("context");
-        if (contextNode == null) {
-            throw new IOException("Missing 'context' field in EventLogRecord JSON");
+        // Deserialize timestamp
+        JsonNode timestampNode = rootNode.get("timestamp");
+        if (timestampNode == null || !timestampNode.isTextual()) {
+            throw new IOException("Missing 'timestamp' field in EventLogRecord JSON");
         }
 
-        EventContext eventContext = mapper.treeToValue(contextNode, EventContext.class);
-        if (eventContext == null) {
-            throw new IOException("Failed to deserialize EventContext");
-        }
-
-        // Deserialize event using eventType from context
+        // Deserialize event using eventType from event node
         JsonNode eventNode = rootNode.get("event");
         if (eventNode == null) {
             throw new IOException("Missing 'event' field in EventLogRecord JSON");
         }
+        String eventType = getEventType(eventNode);
 
-        Event event = deserializeEvent(mapper, eventNode, eventContext.getEventType());
+        Event event = deserializeEvent(mapper, stripEventType(eventNode), eventType);
+        EventContext eventContext = new EventContext(eventType, timestampNode.asText());
 
         return new EventLogRecord(eventContext, event);
     }
@@ -85,7 +83,8 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
             throws IOException {
         try {
             // Load the concrete event class
-            Class<?> eventClass = Class.forName(eventType);
+            Class<?> eventClass =
+                    Class.forName(eventType, true, Thread.currentThread().getContextClassLoader());
 
             // Verify it's actually an Event subclass
             if (!Event.class.isAssignableFrom(eventClass)) {
@@ -101,5 +100,22 @@ public class EventLogRecordJsonDeserializer extends JsonDeserializer<EventLogRec
             throw new IOException(
                     String.format("Failed to deserialize event of type '%s'", eventType), e);
         }
+    }
+
+    private static String getEventType(JsonNode eventNode) throws IOException {
+        JsonNode eventTypeNode = eventNode.get("eventType");
+        if (eventTypeNode == null || !eventTypeNode.isTextual()) {
+            throw new IOException("Missing 'eventType' field in event JSON");
+        }
+        return eventTypeNode.asText();
+    }
+
+    private static JsonNode stripEventType(JsonNode eventNode) {
+        if (eventNode.isObject()) {
+            ObjectNode copy = ((ObjectNode) eventNode).deepCopy();
+            copy.remove("eventType");
+            return copy;
+        }
+        return eventNode;
     }
 }

@@ -18,11 +18,12 @@
 
 package org.apache.flink.agents.plan.serializer;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.SerializationFeature;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -60,13 +61,14 @@ public class ResourceProviderSerializerTest {
         kwargs.put("host", "8.8.8.8");
         kwargs.put("desc", "mock chat model");
         // Create a resource provider.
-        PythonResourceProvider provider =
-                new PythonResourceProvider(
-                        "my_chat_model",
-                        ResourceType.CHAT_MODEL,
+        ResourceDescriptor mockChatModelImpl =
+                new ResourceDescriptor(
                         "flink_agents.plan.tests.test_resource_provider",
                         "MockChatModelImpl",
                         kwargs);
+        PythonResourceProvider provider =
+                new PythonResourceProvider(
+                        "my_chat_model", ResourceType.CHAT_MODEL, mockChatModelImpl);
 
         // Serialize the resource provider to JSON
         String json =

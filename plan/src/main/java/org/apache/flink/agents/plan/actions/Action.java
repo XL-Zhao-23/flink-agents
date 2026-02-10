@@ -18,18 +18,19 @@
 
 package org.apache.flink.agents.plan.actions;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.Function;
 import org.apache.flink.agents.plan.serializer.ActionJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.ActionJsonSerializer;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import javax.annotation.Nullable;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Representation of an agent action with event listening and function execution.
@@ -79,5 +80,20 @@ public class Action {
     @Nullable
     public Map<String, Object> getConfig() {
         return config;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Action other = (Action) o;
+        return name.equals(other.name)
+                && exec.equals(other.exec)
+                && listenEventTypes.equals(other.listenEventTypes);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(name, exec, listenEventTypes);
     }
 }

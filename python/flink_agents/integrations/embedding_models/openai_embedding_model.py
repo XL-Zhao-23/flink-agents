@@ -15,10 +15,11 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-from typing import Any, Dict
+from typing import Any, Dict, Sequence
 
 from openai import NOT_GIVEN, OpenAI
 from pydantic import Field
+from typing_extensions import override
 
 from flink_agents.api.embedding_models.embedding_model import (
     BaseEmbeddingModelConnection,
@@ -94,7 +95,7 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
             **kwargs,
         )
 
-    __client: OpenAI = None
+    __client: OpenAI | None = None
 
     @property
     def client(self) -> OpenAI:
@@ -110,7 +111,7 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
             )
         return self.__client
 
-    def embed(self, text: str, **kwargs: Any) -> list[float]:
+    def embed(self, text: str | Sequence[str], **kwargs: Any) -> list[float] | list[list[float]]:
         """Generate embedding vector for a single text query."""
         # Extract OpenAI specific parameters
         model = kwargs.pop("model")
@@ -127,7 +128,17 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
             user=user if user is not None else NOT_GIVEN,
         )
 
-        return list(response.data[0].embedding)
+        embeddings = [list(embedding.embedding) for embedding in response.data]
+        return embeddings[0] if isinstance(text, str) else embeddings
+
+    @override
+    def close(self) -> None:
+        """Do nothing."""
+        if self.__client is not None:
+            try:
+                self.__client.close()
+            finally:
+                self.__client = None
 
 
 class OpenAIEmbeddingModelSetup(BaseEmbeddingModelSetup):

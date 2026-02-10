@@ -20,9 +20,10 @@
 
 package org.apache.flink.agents.plan;
 
-import org.apache.flink.agents.api.Agent;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -34,7 +35,6 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
-import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -111,7 +111,7 @@ class AgentPlanDeclareChatModelTest {
                         agentPlan.getResource("testChatModel", ResourceType.CHAT_MODEL);
         assertNotNull(model);
 
-        Prompt prompt = new Prompt("Hello world");
+        Prompt prompt = Prompt.fromText("Hello world");
         ChatMessage reply = model.chat(prompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertEquals(MessageRole.ASSISTANT, reply.getRole());
@@ -128,7 +128,7 @@ class AgentPlanDeclareChatModelTest {
         BaseChatModelSetup model =
                 (BaseChatModelSetup) restored.getResource("testChatModel", ResourceType.CHAT_MODEL);
         ChatMessage reply =
-                model.chat(new Prompt("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
+                model.chat(Prompt.fromText("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
         assertEquals("ok:Hi", reply.getContent());
     }
 

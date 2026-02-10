@@ -15,6 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import os
+from enum import Enum
 from typing import Any
 
 from pyflink.java_gateway import get_gateway
@@ -49,7 +51,10 @@ def covert_j_option_to_python_option(j_option: Any) -> ConfigOption:
 
 class AgentConfigOptionsMeta(type):
     """Metaclass for FlinkAgentsCoreOptions."""
-    def __init__(cls, name: str, bases: tuple[type, ...], attrs: dict[str, Any]) -> None:
+
+    def __init__(
+        cls, name: str, bases: tuple[type, ...], attrs: dict[str, Any]
+    ) -> None:
         """Initialize the metaclass for FlinkAgentsCoreOptions."""
         super().__init__(name, bases, attrs)
 
@@ -66,5 +71,62 @@ class AgentConfigOptionsMeta(type):
         return python_option
 
 
+class ErrorHandlingStrategy(Enum):
+    """Error handling strategy for Agent.
+
+    Currently, only works for chat action.
+    """
+
+    RETRY = "retry"
+    FAIL = "fail"
+    IGNORE = "ignore"
+
+
 class AgentConfigOptions(metaclass=AgentConfigOptionsMeta):
     """CoreOptions to manage core configuration parameters for Flink Agents."""
+
+    JOB_IDENTIFIER = ConfigOption(
+        key="job-identifier",
+        config_type=str,
+        default=None,
+    )
+
+
+class AgentExecutionOptions:
+    """Execution options for Flink Agents."""
+
+    ERROR_HANDLING_STRATEGY = ConfigOption(
+        key="error-handling-strategy",
+        config_type=ErrorHandlingStrategy,
+        default=ErrorHandlingStrategy.FAIL,
+    )
+
+    MAX_RETRIES = ConfigOption(
+        key="max-retries",
+        config_type=int,
+        default=3,
+    )
+
+    NUM_ASYNC_THREADS = ConfigOption(
+        key="num-async-threads",
+        config_type=int,
+        default=os.cpu_count() * 2,
+    )
+
+    CHAT_ASYNC = ConfigOption(
+        key="chat.async",
+        config_type=bool,
+        default=True,
+    )
+
+    TOOL_CALL_ASYNC = ConfigOption(
+        key="tool-call.async",
+        config_type=bool,
+        default=True,
+    )
+
+    RAG_ASYNC = ConfigOption(
+        key="rag.async",
+        config_type=bool,
+        default=True,
+    )

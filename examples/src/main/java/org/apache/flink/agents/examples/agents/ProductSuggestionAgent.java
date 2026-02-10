@@ -20,9 +20,9 @@ package org.apache.flink.agents.examples.agents;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.agents.api.Agent;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.Prompt;
@@ -32,8 +32,8 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.examples.agents.CustomTypesAndResources.ProductReviewSummary;
-import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelSetup;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -57,10 +57,10 @@ public class ProductSuggestionAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor generateSuggestionModel() {
-        return ResourceDescriptor.Builder.newBuilder(OllamaChatModelSetup.class.getName())
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
                 .addInitialArgument("model", "qwen3:8b")
-                .addInitialArgument("extract_reasoning", "true")
+                .addInitialArgument("extract_reasoning", true)
                 .addInitialArgument("prompt", "productSuggestionPrompt")
                 .build();
     }
